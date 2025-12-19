@@ -67,6 +67,16 @@ impl Component for CounterPage {
         });
     }
 
+    fn on_exit(&mut self, _cx: &mut Context<Self>) {
+        self.log("Lifecycle: on_exit called (Leaving Page)".to_string());
+    }
+
+    fn on_shutdown(&mut self, _cx: &mut Context<Self>) {
+        // Since we are shutting down, we can't really see this in the log UI, 
+        // but we could perform cleanup here.
+        eprintln!("Lifecycle: on_shutdown called for CounterPage");
+    }
+
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
         cx.subscribe(&self.state);
         cx.subscribe(&self.local);

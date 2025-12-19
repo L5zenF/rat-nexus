@@ -93,15 +93,37 @@ impl Component for Root {
         if let Some(action) = action {
             match action {
                 Action::Navigate(route) => {
+                    // Lifecycle: Call on_exit for current page
+                    match current.as_str() {
+                        "page_a" => self.page_a.on_exit(&mut cx.cast()),
+                        "page_b" => self.page_b.on_exit(&mut cx.cast()),
+                        _ => self.menu.on_exit(&mut cx.cast()),
+                    }
                     self.navigate(route);
+                    // Lifecycle: Call on_init for new page (optional, but consistent)
+                    match self.current.as_str() {
+                        "page_a" => self.page_a.on_init(&mut cx.cast()),
+                        "page_b" => self.page_b.on_init(&mut cx.cast()),
+                        _ => self.menu.on_init(&mut cx.cast()),
+                    }
                     None
                 }
                 Action::Back => {
-                    if self.go_back() {
-                        None
-                    } else {
-                        None
+                    // Lifecycle: Call on_exit
+                    match current.as_str() {
+                        "page_a" => self.page_a.on_exit(&mut cx.cast()),
+                        "page_b" => self.page_b.on_exit(&mut cx.cast()),
+                        _ => self.menu.on_exit(&mut cx.cast()),
                     }
+                    if self.go_back() {
+                        // Lifecycle: Call on_init
+                        match self.current.as_str() {
+                            "page_a" => self.page_a.on_init(&mut cx.cast()),
+                            "page_b" => self.page_b.on_init(&mut cx.cast()),
+                            _ => self.menu.on_init(&mut cx.cast()),
+                        }
+                    }
+                    None
                 }
                 Action::Quit => Some(Action::Quit),
                 Action::Noop => None,

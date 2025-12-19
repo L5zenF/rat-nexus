@@ -236,7 +236,11 @@ impl Application {
 
                                 if let Some(action) = action {
                                     match action {
-                                        Action::Quit => return Ok(()),
+                                        Action::Quit => {
+                                            // Lifecycle: Call on_shutdown
+                                            guard.on_shutdown_any(&mut cx);
+                                            return Ok(());
+                                        }
                                         _ => {}
                                     }
                                 }

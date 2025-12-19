@@ -26,6 +26,16 @@ pub trait Component: Send + Sync + 'static {
         let _ = cx;
     }
 
+    /// Called when the component is removed from the active view (e.g. navigation).
+    fn on_exit(&mut self, cx: &mut Context<Self>) {
+        let _ = cx;
+    }
+
+    /// Called when the application is about to shut down.
+    fn on_shutdown(&mut self, cx: &mut Context<Self>) {
+        let _ = cx;
+    }
+
     /// Render the component into the given area.
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>);
 
@@ -40,6 +50,8 @@ pub trait Component: Send + Sync + 'static {
 /// A dyn-compatible version of the Component trait.
 pub trait AnyComponent: Any + Send + Sync + 'static {
     fn on_init_any(&mut self, cx: &mut Context<dyn AnyComponent>);
+    fn on_exit_any(&mut self, cx: &mut Context<dyn AnyComponent>);
+    fn on_shutdown_any(&mut self, cx: &mut Context<dyn AnyComponent>);
     fn render_any(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<dyn AnyComponent>);
     fn handle_event_any(&mut self, event: Event, cx: &mut EventContext<dyn AnyComponent>) -> Option<Action>;
 }
@@ -48,6 +60,16 @@ impl<T: Component> AnyComponent for T {
     fn on_init_any(&mut self, cx: &mut Context<dyn AnyComponent>) {
         let mut cx = cx.cast::<Self>();
         self.on_init(&mut cx);
+    }
+
+    fn on_exit_any(&mut self, cx: &mut Context<dyn AnyComponent>) {
+        let mut cx = cx.cast::<Self>();
+        self.on_exit(&mut cx);
+    }
+
+    fn on_shutdown_any(&mut self, cx: &mut Context<dyn AnyComponent>) {
+        let mut cx = cx.cast::<Self>();
+        self.on_shutdown(&mut cx);
     }
 
     fn render_any(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<dyn AnyComponent>) {

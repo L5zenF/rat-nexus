@@ -25,6 +25,18 @@ impl Menu {
 }
 
 impl Component for Menu {
+    fn on_init(&mut self, _cx: &mut Context<Self>) {
+        // Menu initialized
+    }
+
+    fn on_exit(&mut self, _cx: &mut Context<Self>) {
+        // Leaving menu
+    }
+
+    fn on_shutdown(&mut self, _cx: &mut Context<Self>) {
+        eprintln!("Lifecycle: on_shutdown called for Menu");
+    }
+
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
         use ratatui::layout::{Layout, Constraint, Direction, Alignment};
         use ratatui::widgets::{Block, Borders, List, ListItem, BorderType};
