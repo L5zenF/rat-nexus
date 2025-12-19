@@ -1,93 +1,100 @@
-//! State management.
-//!
-//! Provides utilities for shared application state with reactivity.
-
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::watch;
 
 /// Shared state wrapper.
 pub type SharedState<T> = Arc<Mutex<T>>;
 
-/// Create a new shared state.
-pub fn new_shared_state<T>(state: T) -> SharedState<T> {
-    Arc::new(Mutex::new(state))
+/// Entity handle, inspired by gpui.
+pub struct Entity<T: ?Sized + Send + Sync> {
+    pub(crate) inner: SharedState<T>,
+    tx: watch::Sender<()>,
 }
 
-/// Entity wrapper for shared state, inspired by gpui.
-///
-/// Provides a convenient interface for reading and writing shared state,
-/// plus reactivity via watch channel.
-pub struct Entity<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    inner: SharedState<T>,
-    tx: watch::Sender<T>,
+/// A weak handle to an entity.
+pub struct WeakEntity<T: ?Sized + Send + Sync> {
+    pub(crate) inner: Weak<Mutex<T>>,
+    tx: watch::Sender<()>,
 }
 
-impl<T> Entity<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    /// Create a new entity with the given initial value.
-    pub fn new(value: T) -> Self {
-        let (tx, _) = watch::channel(value.clone());
-        Self {
-            inner: new_shared_state(value),
-            tx,
+impl<T: ?Sized + Send + Sync> Entity<T> {
+    /// Update the inner value using a closure and notify subscribers.
+    pub fn update<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut guard = self.inner.lock().unwrap();
+        let res = f(&mut *guard);
+        drop(guard);
+        let _ = self.tx.send(());
+        res
+    }
+
+    /// Read the inner value using a closure.
+    pub fn read<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R,
+    {
+        let guard = self.inner.lock().unwrap();
+        f(&*guard)
+    }
+
+    /// Downcast this entity to a weak handle.
+    pub fn downgrade(&self) -> WeakEntity<T> {
+        WeakEntity {
+            inner: Arc::downgrade(&self.inner),
+            tx: self.tx.clone(),
         }
     }
 
-    /// Immutably borrow the inner value.
-    pub fn get(&self) -> std::sync::MutexGuard<'_, T> {
-        self.inner.lock().unwrap()
-    }
-
-    /// Mutably borrow the inner value.
-    /// Note: changes made via this guard will NOT be automatically notified.
-    /// Use `update` or `set` for notification.
-    pub fn get_mut(&self) -> std::sync::MutexGuard<'_, T> {
-        self.inner.lock().unwrap()
-    }
-
-    /// Replace the inner value and notify subscribers.
-    pub fn set(&self, value: T) {
-        *self.inner.lock().unwrap() = value.clone();
-        let _ = self.tx.send(value);
-    }
-
-    /// Update the inner value using a closure and notify subscribers.
-    pub fn update<F>(&self, f: F)
-    where
-        F: FnOnce(&mut T),
-    {
-        let mut guard = self.inner.lock().unwrap();
-        f(&mut *guard);
-        let new_value = (*guard).clone();
-        drop(guard);
-        let _ = self.tx.send(new_value);
-    }
-
     /// Subscribe to changes of this entity.
-    /// Returns a watch receiver that can be used to await changes.
-    pub fn subscribe(&self) -> watch::Receiver<T> {
+    pub fn subscribe(&self) -> watch::Receiver<()> {
         self.tx.subscribe()
-    }
-
-    /// Get the current value via watch (non‑blocking).
-    pub fn watch(&self) -> T {
-        self.tx.borrow().clone()
     }
 }
 
-impl<T> Clone for Entity<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
+impl<T: ?Sized + Send + Sync> WeakEntity<T> {
+    /// Upgrade this weak handle to a strong handle, if the entity is still alive.
+    pub fn upgrade(&self) -> Option<Entity<T>> {
+        self.inner.upgrade().map(|inner| Entity {
+            inner,
+            tx: self.tx.clone(),
+        })
+    }
+
+    /// Update the entity if it is still alive.
+    pub fn update<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        self.upgrade().map(|entity| entity.update(f))
+    }
+}
+
+impl<T: ?Sized + Send + Sync> Clone for Entity<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
             tx: self.tx.clone(),
+        }
+    }
+}
+
+impl<T: ?Sized + Send + Sync> Clone for WeakEntity<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            tx: self.tx.clone(),
+        }
+    }
+}
+
+impl<T: Send + Sync> Entity<T> {
+    /// Create a new entity with the given initial value.
+    pub fn new(value: T) -> Self {
+        let (tx, _) = watch::channel(());
+        Self {
+            inner: Arc::new(Mutex::new(value)),
+            tx,
         }
     }
 }

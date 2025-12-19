@@ -1,6 +1,5 @@
-//! Component trait definition.
-
 use crate::application::{Context, EventContext};
+use std::any::Any;
 
 /// Event type for component interactions.
 #[derive(Debug, Clone)]
@@ -34,7 +33,7 @@ pub trait Component: Send + Sync + 'static {
 }
 
 /// A dyn-compatible version of the Component trait.
-pub trait AnyComponent: Send + Sync + 'static {
+pub trait AnyComponent: Any + Send + Sync + 'static {
     fn render_any(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<dyn AnyComponent>);
     fn handle_event_any(&mut self, event: Event, cx: &mut EventContext<dyn AnyComponent>) -> Option<Action>;
 }
@@ -46,7 +45,7 @@ impl<T: Component> AnyComponent for T {
     }
 
     fn handle_event_any(&mut self, event: Event, cx: &mut EventContext<dyn AnyComponent>) -> Option<Action> {
-        let cx = cx.cast::<Self>();
-        self.handle_event(event, &mut {cx})
+        let mut cx = cx.cast::<Self>();
+        self.handle_event(event, &mut cx)
     }
 }

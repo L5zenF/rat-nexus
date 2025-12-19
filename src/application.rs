@@ -1,7 +1,7 @@
 //! High‑level Application abstraction inspired by GPUI.
 
 use crate::component::traits::{Event, Action, Component, AnyComponent};
-use crate::state::Entity;
+use crate::state::{Entity, WeakEntity};
 use ratatui::prelude::*;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, KeyEventKind},
@@ -27,17 +27,21 @@ impl AppContext {
     /// Create a new entity with the given value.
     pub fn new_entity<T>(&self, value: T) -> Entity<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Send + Sync + 'static,
     {
         Entity::new(value)
     }
 
     /// Schedule a task to be executed later.
-    pub fn spawn<F>(&self, future: F)
+    pub fn spawn<F, Fut>(&self, f: F)
     where
-        F: std::future::Future<Output = ()> + Send + 'static,
+        F: FnOnce(AppContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        tokio::spawn(future);
+        let cx = self.clone();
+        tokio::spawn(async move {
+            f(cx).await;
+        });
     }
 
     /// Set the root component of the application.
@@ -53,18 +57,26 @@ impl AppContext {
 }
 
 /// A specialized context passed to component methods.
-pub struct Context<V: ?Sized> {
+pub struct Context<V: ?Sized + Send + Sync> {
     pub app: AppContext,
     pub area: Rect,
-    _view: std::marker::PhantomData<V>,
+    pub handle: Option<WeakEntity<V>>,
 }
 
-impl<V: ?Sized> Context<V> {
+impl<V: ?Sized + Send + Sync> Context<V> {
     pub fn new(app: AppContext, area: Rect) -> Self {
         Self {
             app,
             area,
-            _view: std::marker::PhantomData,
+            handle: None,
+        }
+    }
+
+    pub fn with_handle(app: AppContext, area: Rect, handle: WeakEntity<V>) -> Self {
+        Self {
+            app,
+            area,
+            handle: Some(handle),
         }
     }
 
@@ -75,7 +87,7 @@ impl<V: ?Sized> Context<V> {
 
     /// Subscribe to an entity's changes.
     pub fn subscribe<T>(&mut self, entity: &Entity<T>) 
-    where T: Clone + Send + Sync + 'static
+    where T: Send + Sync + 'static
     {
         let mut rx = entity.subscribe();
         let tx = self.app.re_render_tx.clone();
@@ -86,13 +98,33 @@ impl<V: ?Sized> Context<V> {
         });
     }
 
+    /// Spawn a task with access to the entity's weak handle.
+    pub fn spawn<F, Fut>(&self, f: F)
+    where
+        V: 'static,
+        F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        if let Some(handle) = self.handle.clone() {
+            let app = self.app.clone();
+            tokio::spawn(async move {
+                f(handle, app).await;
+            });
+        }
+    }
+
     /// Cast this context to another view type.
-    pub fn cast<U: ?Sized>(&self) -> Context<U> {
+    pub fn cast<U: ?Sized + Send + Sync + 'static>(&self) -> Context<U> {
         Context {
             app: self.app.clone(),
             area: self.area,
-            _view: std::marker::PhantomData,
+            handle: unsafe { std::mem::transmute_copy(&self.handle) },
         }
+    }
+
+    /// Explicitly trigger a re-render.
+    pub fn notify(&self) {
+        self.app.refresh();
     }
 }
 
@@ -122,7 +154,9 @@ impl Application {
             re_render_tx,
         };
 
+        let _guard = rt.enter();
         setup(&app_context)?;
+        drop(_guard);
 
         let actual_root = {
             let guard = root.lock().unwrap();
@@ -170,6 +204,8 @@ impl Application {
                     terminal.draw(|frame| {
                         let area = frame.area();
                         let mut cx = Context::<dyn AnyComponent>::new(app.clone(), area);
+                        // In a real GPUI-like app, the root would be an Entity<dyn AnyComponent>.
+                        // For now, we just pass the context.
                         let mut guard = root.lock().unwrap();
                         guard.render_any(frame, &mut cx);
                     })?;
@@ -184,7 +220,10 @@ impl Application {
                                 let mut cx = EventContext::<dyn AnyComponent>::new(app.clone(), area);
                                 
                                 let mut guard = root.lock().unwrap();
-                                if let Some(action) = guard.handle_event_any(event, &mut cx) {
+                                let action = guard.handle_event_any(event, &mut cx);
+                                app.refresh(); // Trigger refresh after any event handling
+
+                                if let Some(action) = action {
                                     match action {
                                         Action::Quit => return Ok(()),
                                         _ => {}

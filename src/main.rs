@@ -108,7 +108,7 @@ impl CounterPage {
 
 impl Component for CounterPage {
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        let counter = self.state.get().counter;
+        let counter = self.state.read(|s| s.counter);
         let text = format!("{} - Counter: {}", self.title, counter);
         let paragraph = ratatui::widgets::Paragraph::new(text)
             .alignment(ratatui::layout::Alignment::Center);
@@ -118,13 +118,11 @@ impl Component for CounterPage {
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
         match event {
             Event::Key(key) if key.code == KeyCode::Char('j') => {
-                let mut state = self.state.get_mut();
-                state.counter += 1;
+                self.state.update(|s| s.counter += 1);
                 None
             }
             Event::Key(key) if key.code == KeyCode::Char('k') => {
-                let mut state = self.state.get_mut();
-                state.counter -= 1;
+                self.state.update(|s| s.counter -= 1);
                 None
             }
             Event::Key(key) if key.code == KeyCode::Char('m') => {
@@ -245,7 +243,7 @@ fn main() -> std::io::Result<()> {
         let root = std::sync::Arc::new(std::sync::Mutex::new(root));
         cx.set_root(root);
 
-        cx.spawn(async move {
+        cx.spawn(|_| async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         });
 
