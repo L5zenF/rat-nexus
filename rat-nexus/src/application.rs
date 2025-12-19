@@ -177,6 +177,15 @@ impl Application {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
+        // Lifecycle: Call on_init on the root component
+        {
+            let size = terminal.size()?;
+            let area = Rect::new(0, 0, size.width, size.height);
+            let mut guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned during on_init"))?;
+            let mut cx = Context::<dyn AnyComponent>::new(app.clone(), area);
+            guard.on_init_any(&mut cx);
+        }
+
         let result = self.run_app_loop(app, &mut terminal, root, re_render_rx).await;
 
         disable_raw_mode()?;

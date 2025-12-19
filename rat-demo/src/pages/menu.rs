@@ -1,15 +1,17 @@
-use rat_nexus::{Component, Context, EventContext, Event, Action, Route};
-use ratatui::widgets::{Block, Borders, List, ListItem};
-use ratatui::style::{Style, Modifier};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Route, Entity};
+use ratatui::widgets::Paragraph;
+use ratatui::style::Stylize;
 use crossterm::event::KeyCode;
+use crate::model::AppState;
 
 pub struct Menu {
     selected: usize,
     options: Vec<(&'static str, Route)>,
+    state: Entity<AppState>,
 }
 
 impl Menu {
-    pub fn new() -> Self {
+    pub fn new(state: Entity<AppState>) -> Self {
         Self {
             selected: 0,
             options: vec![
@@ -17,32 +19,82 @@ impl Menu {
                 ("Counter Page B", "page_b".to_string()),
                 ("Exit", "exit".to_string()),
             ],
+            state,
         }
     }
 }
 
 impl Component for Menu {
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        let block = Block::default().title("Main Menu").borders(Borders::ALL);
-        let inner_area = block.inner(cx.area);
-        frame.render_widget(block, cx.area);
+        use ratatui::layout::{Layout, Constraint, Direction, Alignment};
+        use ratatui::widgets::{Block, Borders, List, ListItem, BorderType};
+        use ratatui::style::{Style, Modifier, Color, Stylize};
+
+        cx.subscribe(&self.state);
+        let counter = self.state.read(|s| s.counter).unwrap_or(0);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(0),
+                Constraint::Length(3),
+            ])
+            .margin(2)
+            .split(cx.area);
+
+        let header = Paragraph::new(" NEXUS SYSTEM MENU ")
+            .bold()
+            .cyan()
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Double));
+        frame.render_widget(header, chunks[0]);
+
+        let body_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(60),
+                Constraint::Percentage(40),
+            ])
+            .split(chunks[1]);
 
         let items: Vec<ListItem> = self.options.iter()
             .enumerate()
             .map(|(i, (label, _))| {
-                let style = if i == self.selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
+                if i == self.selected {
+                    ListItem::new(format!(" > {} ", label))
+                        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
                 } else {
-                    Style::default()
-                };
-                ListItem::new(*label).style(style)
+                    ListItem::new(format!("   {} ", label))
+                        .style(Style::default().fg(Color::Gray))
+                }
             })
             .collect();
 
         let list = List::new(items)
-            .highlight_symbol("> ")
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-        frame.render_widget(list, inner_area);
+            .block(Block::default()
+                .title(" Select Module ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::DarkGray)));
+        
+        frame.render_widget(list, body_chunks[0]);
+
+        let info = Paragraph::new(vec![
+            " Global Status ".bold().cyan().into(),
+            "".into(),
+            format!(" System Counter: {}", counter).into(),
+            "".into(),
+            " Framework: Active ".green().into(),
+            " Reactivity: Enabled ".green().into(),
+        ])
+        .block(Block::default().title(" Monitor ").borders(Borders::ALL).border_type(BorderType::Rounded));
+        frame.render_widget(info, body_chunks[1]);
+
+        let footer = Paragraph::new(" Use ↑↓ to navigate, ENTER to select ")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+        frame.render_widget(footer, chunks[2]);
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

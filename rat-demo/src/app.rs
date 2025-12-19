@@ -16,7 +16,7 @@ impl Root {
         Self {
             current: "menu".to_string(),
             history: Vec::new(),
-            menu: Menu::new(),
+            menu: Menu::new(shared_state.clone()),
             page_a: CounterPage::new("Page A", shared_state.clone(), cx.new_entity(LocalState::default())),
             page_b: CounterPage::new("Page B", shared_state, cx.new_entity(LocalState::default())),
         }
@@ -40,6 +40,21 @@ impl Root {
 }
 
 impl Component for Root {
+    fn on_init(&mut self, cx: &mut Context<Self>) {
+        {
+            let mut cx = cx.cast::<Menu>();
+            self.menu.on_init(&mut cx);
+        }
+        {
+            let mut cx = cx.cast::<CounterPage>();
+            self.page_a.on_init(&mut cx);
+        }
+        {
+            let mut cx = cx.cast::<CounterPage>();
+            self.page_b.on_init(&mut cx);
+        }
+    }
+
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
         let current = self.current.clone();
         match current.as_str() {

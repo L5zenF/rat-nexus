@@ -1,6 +1,7 @@
 #[derive(Default, Clone)]
 pub struct AppState {
     pub counter: i32,
+    pub history: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -9,6 +10,8 @@ pub struct LocalState {
     pub logs: Vec<String>,
     pub progress: u16,
     pub is_working: bool,
+    pub current_time: String,
+    pub system_load: Vec<u64>,
 }
 
 impl Default for LocalState {
@@ -18,6 +21,8 @@ impl Default for LocalState {
             logs: vec!["Initialized".to_string()],
             progress: 0,
             is_working: false,
+            current_time: "--:--:--".to_string(),
+            system_load: vec![0; 20],
         }
     }
 }
