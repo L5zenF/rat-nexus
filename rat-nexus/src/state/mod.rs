@@ -42,7 +42,7 @@ impl<T: ?Sized + Send + Sync> Entity<T> {
     pub fn downgrade(&self) -> WeakEntity<T> {
         WeakEntity {
             inner: Arc::downgrade(&self.inner),
-            tx: self.tx.clone(),
+            tx: watch::Sender::clone(&self.tx),
         }
     }
 
@@ -57,7 +57,7 @@ impl<T: ?Sized + Send + Sync> WeakEntity<T> {
     pub fn upgrade(&self) -> Option<Entity<T>> {
         self.inner.upgrade().map(|inner| Entity {
             inner,
-            tx: self.tx.clone(),
+            tx: watch::Sender::clone(&self.tx),
         })
     }
 
@@ -73,8 +73,8 @@ impl<T: ?Sized + Send + Sync> WeakEntity<T> {
 impl<T: ?Sized + Send + Sync> Clone for Entity<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: self.inner.clone(),
-            tx: self.tx.clone(),
+            inner: Arc::clone(&self.inner),
+            tx: watch::Sender::clone(&self.tx),
         }
     }
 }
@@ -82,8 +82,8 @@ impl<T: ?Sized + Send + Sync> Clone for Entity<T> {
 impl<T: ?Sized + Send + Sync> Clone for WeakEntity<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: self.inner.clone(),
-            tx: self.tx.clone(),
+            inner: Weak::clone(&self.inner),
+            tx: watch::Sender::clone(&self.tx),
         }
     }
 }

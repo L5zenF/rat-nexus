@@ -14,13 +14,20 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
-/// Application context providing access to global services.
-#[derive(Clone)]
 pub struct AppContext {
     /// The root component to render, if set by the user.
     root: Arc<Mutex<Option<Arc<Mutex<dyn AnyComponent>>>>>,
     /// Internal: Channel to trigger a re-render.
     re_render_tx: mpsc::UnboundedSender<()>,
+}
+
+impl Clone for AppContext {
+    fn clone(&self) -> Self {
+        Self {
+            root: Arc::clone(&self.root),
+            re_render_tx: mpsc::UnboundedSender::clone(&self.re_render_tx),
+        }
+    }
 }
 
 impl AppContext {
@@ -38,7 +45,7 @@ impl AppContext {
         F: FnOnce(AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        let cx = self.clone();
+        let cx = AppContext::clone(self);
         tokio::spawn(async move {
             f(cx).await;
         });
@@ -92,9 +99,9 @@ impl<V: ?Sized + Send + Sync> Context<V> {
     where T: Send + Sync + 'static
     {
         let mut rx = entity.subscribe();
-        let tx = self.app.re_render_tx.clone();
+        let tx = mpsc::UnboundedSender::clone(&self.app.re_render_tx);
         tokio::spawn(async move {
-            while let Ok(_) = rx.changed().await {
+            while rx.changed().await.is_ok() {
                 let _ = tx.send(());
             }
         });
@@ -107,8 +114,9 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        if let Some(handle) = self.handle.clone() {
-            let app = self.app.clone();
+        if let Some(ref handle) = self.handle {
+            let handle = WeakEntity::clone(handle);
+            let app = AppContext::clone(&self.app);
             tokio::spawn(async move {
                 f(handle, app).await;
             });
@@ -118,7 +126,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
     /// Cast this context to another view type.
     pub fn cast<U: ?Sized + Send + Sync + 'static>(&self) -> Context<U> {
         Context {
-            app: self.app.clone(),
+            app: AppContext::clone(&self.app),
             area: self.area,
             handle: unsafe { std::mem::transmute_copy(&self.handle) },
         }
@@ -148,11 +156,10 @@ impl Application {
         F: FnOnce(&AppContext) -> anyhow::Result<()>,
     {
         let rt = Runtime::new().map_err(|e| anyhow::anyhow!("Failed to start tokio: {}", e))?;
-        
         let (re_render_tx, re_render_rx) = mpsc::unbounded_channel();
         let root = Arc::new(Mutex::new(None));
         let app_context = AppContext {
-            root: root.clone(),
+            root: Arc::clone(&root),
             re_render_tx,
         };
 
@@ -162,7 +169,7 @@ impl Application {
 
         let actual_root = {
             let guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned"))?;
-            guard.clone().unwrap_or_else(|| Arc::new(Mutex::new(DummyView)))
+            guard.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::new(Mutex::new(DummyView)))
         };
 
         rt.block_on(async move {
@@ -182,7 +189,7 @@ impl Application {
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
             let mut guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned during on_init"))?;
-            let mut cx = Context::<dyn AnyComponent>::new(app.clone(), area);
+            let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), area);
             guard.on_init_any(&mut cx);
         }
 
@@ -248,7 +255,7 @@ impl Application {
                     if let Some(event) = internal_event {
                         let size = terminal.size()?;
                         let area = Rect::new(0, 0, size.width, size.height);
-                        let mut cx = EventContext::<dyn AnyComponent>::new(app.clone(), area);
+                        let mut cx = EventContext::<dyn AnyComponent>::new(AppContext::clone(&app), area);
                         
                         let mut guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned during event"))?;
                         let action = guard.handle_event_any(event, &mut cx);
@@ -272,7 +279,7 @@ impl Application {
 
                     terminal.draw(|frame| {
                         let area = frame.area();
-                        let mut cx = Context::<dyn AnyComponent>::new(app.clone(), area);
+                        let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), area);
                         let mut guard = root.lock().expect("Root mutex poisoned during render");
                         guard.render_any(frame, &mut cx);
                     })?;
