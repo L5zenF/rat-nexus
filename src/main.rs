@@ -11,6 +11,7 @@ use router::traits::Route;
 use state::Entity;
 use application::{Application, Context, EventContext};
 use crossterm::event::KeyCode;
+use crate::application::AppContext;
 
 // Define application state (Model)
 #[derive(Default, Clone)]
@@ -94,35 +95,153 @@ impl Component for Menu {
     }
 }
 
+#[derive(Clone)]
+struct LocalState {
+    layout_horizontal: bool,
+    logs: Vec<String>,
+    progress: u16,
+    is_working: bool,
+}
+
+impl Default for LocalState {
+    fn default() -> Self {
+        Self {
+            layout_horizontal: false,
+            logs: vec!["Initialized".to_string()],
+            progress: 0,
+            is_working: false,
+        }
+    }
+}
+
 // Define a counter page component using Entity
 struct CounterPage {
     title: &'static str,
     state: Entity<AppState>,
+    local: Entity<LocalState>,
 }
 
 impl CounterPage {
-    fn new(title: &'static str, state: Entity<AppState>) -> Self {
-        Self { title, state }
+    fn new(title: &'static str, state: Entity<AppState>, local: Entity<LocalState>) -> Self {
+        Self { title, state, local }
+    }
+
+    fn log(&self, msg: String) {
+        self.local.update(|s| {
+            s.logs.push(msg);
+            if s.logs.len() > 10 {
+                s.logs.remove(0);
+            }
+        });
     }
 }
 
 impl Component for CounterPage {
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+        // Subscribe to updates
+        cx.subscribe(&self.state);
+        cx.subscribe(&self.local);
+
         let counter = self.state.read(|s| s.counter);
-        let text = format!("{} - Counter: {}", self.title, counter);
-        let paragraph = ratatui::widgets::Paragraph::new(text)
+        let local = self.local.read(|s| s.clone());
+        
+        use ratatui::layout::{Layout, Constraint, Direction, Rect};
+        use ratatui::widgets::{Block, Borders, Paragraph, Gauge, List, ListItem};
+        use ratatui::style::{Style, Color, Modifier};
+
+        let direction = if local.layout_horizontal { Direction::Horizontal } else { Direction::Vertical };
+        
+        let chunks = Layout::default()
+            .direction(direction)
+            .margin(1)
+            .constraints([
+                Constraint::Percentage(25), // Counter
+                Constraint::Percentage(25), // Context Info
+                Constraint::Percentage(25), // Progress
+                Constraint::Percentage(25), // Logs
+            ])
+            .split(cx.area);
+
+        // 1. Shared State (Counter)
+        let text = format!("{}\nCounter: {}", self.title, counter);
+        let p1 = Paragraph::new(text)
+            .block(Block::default().title("1. Global State").borders(Borders::ALL))
             .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(paragraph, cx.area);
+        frame.render_widget(p1, chunks[0]);
+
+        // 2. Context Info
+        let area_info = format!(
+            "Area: {}x{}\nOrigin: ({}, {})\n\nMode: {}", 
+            cx.area.width, cx.area.height, cx.area.x, cx.area.y,
+            if local.layout_horizontal { "Horizontal" } else { "Vertical" }
+        );
+        let p2 = Paragraph::new(area_info)
+            .block(Block::default().title("2. Render Context").borders(Borders::ALL));
+        frame.render_widget(p2, chunks[1]);
+
+        // 3. Async Progress
+        let gauge = Gauge::default()
+            .block(Block::default().title("3. Async Task").borders(Borders::ALL))
+            .gauge_style(Style::default().fg(if local.is_working { Color::Yellow } else { Color::Green }))
+            .percent(local.progress);
+        frame.render_widget(gauge, chunks[2]);
+
+        // 4. Logs
+        let items: Vec<ListItem> = local.logs.iter()
+            .rev()
+            .map(|l| ListItem::new(l.as_str()))
+            .collect();
+        let list = List::new(items)
+            .block(Block::default().title("4. Event Log").borders(Borders::ALL));
+        frame.render_widget(list, chunks[3]);
+        
+        // Help overlay (bottom)
+        if !local.layout_horizontal {
+             // In vertical mode, maybe don't overlay, but let's just assume simple layout for now.
+             // Actually, let's render controls title on the main block border if possible? 
+             // Or just verify keys work. The 'Controls' block was removed for 4-pane layout. 
+             // We can put controls info in title of the whole app or just rely on user knowing.
+        }
     }
 
-    fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
+    fn handle_event(&mut self, event: Event, cx: &mut EventContext<Self>) -> Option<Action> {
         match event {
+            Event::Key(key) if key.code == KeyCode::Char('l') => {
+                self.local.update(|s| s.layout_horizontal = !s.layout_horizontal);
+                self.log("Layout Toggled".to_string());
+                None
+            }
+            Event::Key(key) if key.code == KeyCode::Char('w') => {
+                 let local = self.local.clone();
+                 // If not already working
+                 let is_working = local.read(|s| s.is_working);
+                 if !is_working {
+                    self.log("Async Task Started".to_string());
+                    local.update(|s| { s.is_working = true; s.progress = 0; });
+                    let app = cx.app.clone();
+                    
+                    cx.app.spawn(move |_| async move {
+                        for i in 1..=10 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                            local.update(|s| s.progress = i * 10);
+                        }
+                        local.update(|s| { s.is_working = false; s.logs.push("Task Complete".to_string()); });
+                    });
+                 }
+                 None
+            }
+             Event::Key(key) if key.code == KeyCode::Char('c') => {
+                self.local.update(|s| s.logs.clear());
+                None
+            }
             Event::Key(key) if key.code == KeyCode::Char('j') => {
                 self.state.update(|s| s.counter += 1);
+                self.log("Counter ++".to_string());
                 None
             }
             Event::Key(key) if key.code == KeyCode::Char('k') => {
                 self.state.update(|s| s.counter -= 1);
+                self.log("Counter --".to_string());
                 None
             }
             Event::Key(key) if key.code == KeyCode::Char('m') => {
@@ -149,13 +268,13 @@ struct Root {
 }
 
 impl Root {
-    fn new(shared_state: Entity<AppState>) -> Self {
+    fn new(shared_state: Entity<AppState>, cx: &AppContext) -> Self {
         Self {
             current: "menu".to_string(),
             history: Vec::new(),
             menu: Menu::new(),
-            page_a: CounterPage::new("Page A", shared_state.clone()),
-            page_b: CounterPage::new("Page B", shared_state),
+            page_a: CounterPage::new("Page A", shared_state.clone(), cx.new_entity(LocalState::default())),
+            page_b: CounterPage::new("Page B", shared_state, cx.new_entity(LocalState::default())),
         }
     }
 
@@ -239,7 +358,7 @@ fn main() -> std::io::Result<()> {
 
     app.run(move |cx| {
         let shared_state = cx.new_entity(AppState::default());
-        let root = Root::new(shared_state);
+        let root = Root::new(shared_state, cx);
         let root = std::sync::Arc::new(std::sync::Mutex::new(root));
         cx.set_root(root);
 
