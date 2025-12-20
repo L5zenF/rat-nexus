@@ -115,20 +115,13 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         });
     }
 
-    /// Spawn a task with access to the entity's weak handle.
+    /// Spawn a task using the application context.
     pub fn spawn<F, Fut>(&self, f: F)
     where
-        V: 'static,
-        F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
+        F: FnOnce(AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        if let Some(ref handle) = self.handle {
-            let handle = WeakEntity::clone(handle);
-            let app = AppContext::clone(&self.app);
-            tokio::spawn(async move {
-                f(handle, app).await;
-            });
-        }
+        self.app.spawn(f);
     }
 
     /// Cast this context to another view type.
@@ -136,7 +129,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         Context {
             app: AppContext::clone(&self.app),
             area: self.area,
-            handle: unsafe { std::mem::transmute_copy(&self.handle) },
+            handle: None,
         }
     }
 
