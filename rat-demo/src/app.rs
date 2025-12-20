@@ -1,15 +1,16 @@
 use rat_nexus::{Component, Context, EventContext, Event, Action, Route, Entity, AppContext};
 use crate::model::{AppState, LocalState};
-use crate::pages::{Menu, CounterPage, SnakePage};
+use crate::pages::{Menu, CounterPage, SnakePage, ShowcasePage, MonitorPage};
 
 // A simple root component that switches between menu and pages
 pub struct Root {
     current: Route,
     history: Vec<Route>,
     menu: Menu,
-    page_a: CounterPage,
-    page_b: CounterPage,
+    counter: CounterPage,
     snake: SnakePage,
+    showcase: ShowcasePage,
+    monitor: MonitorPage,
 }
 
 impl Root {
@@ -18,9 +19,10 @@ impl Root {
             current: "menu".to_string(),
             history: Vec::new(),
             menu: Menu::new(shared_state.clone()),
-            page_a: CounterPage::new("Page A", shared_state.clone(), cx.new_entity(LocalState::default())),
-            page_b: CounterPage::new("Page B", shared_state, cx.new_entity(LocalState::default())),
+            counter: CounterPage::new("Counter Demo", shared_state.clone(), cx.new_entity(LocalState::default())),
             snake: SnakePage::new(cx),
+            showcase: ShowcasePage::new(shared_state.clone(), cx),
+            monitor: MonitorPage::new(shared_state, cx),
         }
     }
 
@@ -50,24 +52,29 @@ impl Component for Root {
         }
         {
             let mut cx = cx.cast::<CounterPage>();
-            self.page_a.on_mount(&mut cx);
-        }
-        {
-            let mut cx = cx.cast::<CounterPage>();
-            self.page_b.on_mount(&mut cx);
+            self.counter.on_mount(&mut cx);
         }
         {
             let mut cx = cx.cast::<SnakePage>();
             self.snake.on_mount(&mut cx);
+        }
+        {
+            let mut cx = cx.cast::<ShowcasePage>();
+            self.showcase.on_mount(&mut cx);
+        }
+        {
+            let mut cx = cx.cast::<MonitorPage>();
+            self.monitor.on_mount(&mut cx);
         }
     }
 
     fn on_enter(&mut self, cx: &mut Context<Self>) {
         // Enter the current page
         match self.current.as_str() {
-            "page_a" => self.page_a.on_enter(&mut cx.cast()),
-            "page_b" => self.page_b.on_enter(&mut cx.cast()),
+            "counter" => self.counter.on_enter(&mut cx.cast()),
             "snake" => self.snake.on_enter(&mut cx.cast()),
+            "showcase" => self.showcase.on_enter(&mut cx.cast()),
+            "monitor" => self.monitor.on_enter(&mut cx.cast()),
             _ => self.menu.on_enter(&mut cx.cast()),
         }
     }
@@ -75,17 +82,21 @@ impl Component for Root {
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
         let current = self.current.clone();
         match current.as_str() {
-            "page_a" => {
+            "counter" => {
                 let mut cx = cx.cast::<CounterPage>();
-                self.page_a.render(frame, &mut cx);
-            }
-            "page_b" => {
-                let mut cx = cx.cast::<CounterPage>();
-                self.page_b.render(frame, &mut cx);
+                self.counter.render(frame, &mut cx);
             }
             "snake" => {
                 let mut cx = cx.cast::<SnakePage>();
                 self.snake.render(frame, &mut cx);
+            }
+            "showcase" => {
+                let mut cx = cx.cast::<ShowcasePage>();
+                self.showcase.render(frame, &mut cx);
+            }
+            "monitor" => {
+                let mut cx = cx.cast::<MonitorPage>();
+                self.monitor.render(frame, &mut cx);
             }
             _ => {
                 let mut cx = cx.cast::<Menu>();
@@ -97,17 +108,21 @@ impl Component for Root {
     fn handle_event(&mut self, event: Event, cx: &mut EventContext<Self>) -> Option<Action> {
         let current = self.current.clone();
         let action = match current.as_str() {
-            "page_a" => {
+            "counter" => {
                 let mut cx = cx.cast::<CounterPage>();
-                self.page_a.handle_event(event, &mut cx)
-            }
-            "page_b" => {
-                let mut cx = cx.cast::<CounterPage>();
-                self.page_b.handle_event(event, &mut cx)
+                self.counter.handle_event(event, &mut cx)
             }
             "snake" => {
                 let mut cx = cx.cast::<SnakePage>();
                 self.snake.handle_event(event, &mut cx)
+            }
+            "showcase" => {
+                let mut cx = cx.cast::<ShowcasePage>();
+                self.showcase.handle_event(event, &mut cx)
+            }
+            "monitor" => {
+                let mut cx = cx.cast::<MonitorPage>();
+                self.monitor.handle_event(event, &mut cx)
             }
             _ => {
                 let mut cx = cx.cast::<Menu>();
@@ -120,17 +135,19 @@ impl Component for Root {
                 Action::Navigate(route) => {
                     // Lifecycle: Call on_exit for current page
                     match current.as_str() {
-                        "page_a" => self.page_a.on_exit(&mut cx.cast()),
-                        "page_b" => self.page_b.on_exit(&mut cx.cast()),
+                        "counter" => self.counter.on_exit(&mut cx.cast()),
                         "snake" => self.snake.on_exit(&mut cx.cast()),
+                        "showcase" => self.showcase.on_exit(&mut cx.cast()),
+                        "monitor" => self.monitor.on_exit(&mut cx.cast()),
                         _ => self.menu.on_exit(&mut cx.cast()),
                     }
                     self.navigate(route);
                     // Lifecycle: Call on_enter for new page (not on_mount - already mounted)
                     match self.current.as_str() {
-                        "page_a" => self.page_a.on_enter(&mut cx.cast()),
-                        "page_b" => self.page_b.on_enter(&mut cx.cast()),
+                        "counter" => self.counter.on_enter(&mut cx.cast()),
                         "snake" => self.snake.on_enter(&mut cx.cast()),
+                        "showcase" => self.showcase.on_enter(&mut cx.cast()),
+                        "monitor" => self.monitor.on_enter(&mut cx.cast()),
                         _ => self.menu.on_enter(&mut cx.cast()),
                     }
                     None
@@ -138,17 +155,19 @@ impl Component for Root {
                 Action::Back => {
                     // Lifecycle: Call on_exit
                     match current.as_str() {
-                        "page_a" => self.page_a.on_exit(&mut cx.cast()),
-                        "page_b" => self.page_b.on_exit(&mut cx.cast()),
+                        "counter" => self.counter.on_exit(&mut cx.cast()),
                         "snake" => self.snake.on_exit(&mut cx.cast()),
+                        "showcase" => self.showcase.on_exit(&mut cx.cast()),
+                        "monitor" => self.monitor.on_exit(&mut cx.cast()),
                         _ => self.menu.on_exit(&mut cx.cast()),
                     }
                     if self.go_back() {
                         // Lifecycle: Call on_enter (not on_mount)
                         match self.current.as_str() {
-                            "page_a" => self.page_a.on_enter(&mut cx.cast()),
-                            "page_b" => self.page_b.on_enter(&mut cx.cast()),
+                            "counter" => self.counter.on_enter(&mut cx.cast()),
                             "snake" => self.snake.on_enter(&mut cx.cast()),
+                            "showcase" => self.showcase.on_enter(&mut cx.cast()),
+                            "monitor" => self.monitor.on_enter(&mut cx.cast()),
                             _ => self.menu.on_enter(&mut cx.cast()),
                         }
                     }

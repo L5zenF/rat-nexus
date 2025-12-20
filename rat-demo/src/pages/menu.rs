@@ -5,7 +5,7 @@ use crate::model::AppState;
 
 pub struct Menu {
     selected: usize,
-    options: Vec<(&'static str, Route)>,
+    options: Vec<(&'static str, &'static str, Route)>,  // (label, description, route)
     state: Entity<AppState>,
 }
 
@@ -14,10 +14,11 @@ impl Menu {
         Self {
             selected: 0,
             options: vec![
-                ("Counter Page A", "page_a".to_string()),
-                ("Counter Page B", "page_b".to_string()),
-                ("Snake Game 🐍", "snake".to_string()),
-                ("Exit", "exit".to_string()),
+                ("Counter Demo", "Reactive state, lifecycle & async tasks", "counter".to_string()),
+                ("Widget Showcase", "Tabs, Tables, Charts, Gauges, Lists", "showcase".to_string()),
+                ("System Monitor", "Real-time async data visualization", "monitor".to_string()),
+                ("Snake Game", "Canvas rendering & game loop", "snake".to_string()),
+                ("Exit", "Quit application", "exit".to_string()),
             ],
             state,
         }
@@ -38,52 +39,71 @@ impl Component for Menu {
     }
 
     fn on_shutdown(&mut self, _cx: &mut Context<Self>) {
-        eprintln!("Lifecycle: on_shutdown called for Menu");
+        // Cleanup
     }
 
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
         use ratatui::layout::{Layout, Constraint, Direction, Alignment};
         use ratatui::widgets::{Block, Borders, List, ListItem, BorderType};
-        use ratatui::style::{Style, Modifier, Color, Stylize};
+        use ratatui::style::{Style, Modifier, Color};
+        use ratatui::text::{Line, Span};
 
         cx.subscribe(&self.state);
-        let counter = self.state.read(|s| s.counter).unwrap_or(0);
+        let app_state = self.state.read(|s| s.clone()).unwrap_or_default();
+        let theme_color = app_state.theme.color();
 
-        let chunks = Layout::default()
+        let area = frame.area();
+
+        // Main layout
+        let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Length(8),  // ASCII Art header
+                Constraint::Min(0),     // Body
+                Constraint::Length(3),  // Footer
             ])
-            .margin(2)
-            .split(frame.area());
+            .split(area);
 
-        let header = Paragraph::new(" NEXUS SYSTEM MENU ")
-            .bold()
-            .cyan()
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Double));
-        frame.render_widget(header, chunks[0]);
+        // ASCII Art Header
+        let ascii_art = vec![
+            Line::from(""),
+            Line::styled("  ██████╗  █████╗ ████████╗    ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗", Style::default().fg(theme_color)),
+            Line::styled("  ██╔══██╗██╔══██╗╚══██╔══╝    ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝", Style::default().fg(theme_color)),
+            Line::styled("  ██████╔╝███████║   ██║       ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗", Style::default().fg(theme_color)),
+            Line::styled("  ██╔══██╗██╔══██║   ██║       ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║", Style::default().fg(theme_color)),
+            Line::styled("  ██║  ██║██║  ██║   ██║       ██║ ╚████║███████╗██╔╝ ╚██╗╚██████╔╝███████║", Style::default().fg(theme_color)),
+            Line::styled("  ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝       ╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝ ╚═════╝ ╚══════╝", Style::default().fg(theme_color)),
+        ];
+        let header = Paragraph::new(ascii_art).alignment(Alignment::Center);
+        frame.render_widget(header, main_chunks[0]);
 
+        // Body: Menu + Info panel
         let body_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
-            ])
-            .split(chunks[1]);
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .margin(1)
+            .split(main_chunks[1]);
 
+        // Menu list with descriptions
         let items: Vec<ListItem> = self.options.iter()
             .enumerate()
-            .map(|(i, (label, _))| {
-                if i == self.selected {
-                    ListItem::new(format!(" > {} ", label))
-                        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                } else {
-                    ListItem::new(format!("   {} ", label))
-                        .style(Style::default().fg(Color::Gray))
-                }
+            .map(|(i, (label, desc, _))| {
+                let is_selected = i == self.selected;
+                let prefix = if is_selected { "▶ " } else { "  " };
+
+                let lines = vec![
+                    Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(if is_selected { theme_color } else { Color::DarkGray })),
+                        Span::styled(*label, Style::default()
+                            .fg(if is_selected { theme_color } else { Color::White })
+                            .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() })),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(*desc, Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                    ]),
+                ];
+                ListItem::new(lines)
             })
             .collect();
 
@@ -92,52 +112,100 @@ impl Component for Menu {
                 .title(" Select Module ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray)));
-        
+                .border_style(Style::default().fg(theme_color)));
+
         frame.render_widget(list, body_chunks[0]);
 
-        let info = Paragraph::new(vec![
-            " Global Status ".bold().cyan().into(),
-            "".into(),
-            format!(" System Counter: {}", counter).into(),
-            "".into(),
-            " Framework: Active ".green().into(),
-            " Reactivity: Enabled ".green().into(),
-        ])
-        .block(Block::default().title(" Monitor ").borders(Borders::ALL).border_type(BorderType::Rounded));
+        // Info panel with framework features
+        let info_lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" 🦀 ", Style::default()),
+                Span::styled("Rat-Nexus Framework", Style::default().fg(theme_color).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::styled(" A reactive TUI framework inspired by GPUI", Style::default().fg(Color::DarkGray)),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green)),
+                Span::raw("Entity<T> reactive state"),
+            ]),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green)),
+                Span::raw("GPUI-style Context binding"),
+            ]),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green)),
+                Span::raw("Component lifecycle hooks"),
+            ]),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green)),
+                Span::raw("TaskTracker async management"),
+            ]),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(Color::Green)),
+                Span::raw("Type-safe routing"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Counter: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}", app_state.counter), Style::default().fg(theme_color)),
+            ]),
+            Line::from(vec![
+                Span::styled(" Theme: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(app_state.theme.name(), Style::default().fg(theme_color)),
+            ]),
+        ];
+
+        let info = Paragraph::new(info_lines)
+            .block(Block::default()
+                .title(" About ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme_color)));
         frame.render_widget(info, body_chunks[1]);
 
-        let footer = Paragraph::new(" Use ↑↓ to navigate, ENTER to select ")
-            .style(Style::default().fg(Color::DarkGray))
+        // Footer
+        let footer = Paragraph::new(" ↑/↓ Navigate │ Enter Select │ T Theme │ Q Quit ")
+            .style(Style::default().bg(theme_color).fg(Color::Black))
             .alignment(Alignment::Center);
-        frame.render_widget(footer, chunks[2]);
+        frame.render_widget(footer, main_chunks[2]);
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
         match event {
-            Event::Key(key) if key.code == KeyCode::Up => {
-                if self.selected > 0 {
-                    self.selected -= 1;
+            Event::Key(key) => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.selected > 0 {
+                        self.selected -= 1;
+                    } else {
+                        self.selected = self.options.len() - 1;
+                    }
+                    None
                 }
-                None
-            }
-            Event::Key(key) if key.code == KeyCode::Down => {
-                if self.selected < self.options.len() - 1 {
-                    self.selected += 1;
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.selected < self.options.len() - 1 {
+                        self.selected += 1;
+                    } else {
+                        self.selected = 0;
+                    }
+                    None
                 }
-                None
-            }
-            Event::Key(key) if key.code == KeyCode::Enter => {
-                let (_, route) = &self.options[self.selected];
-                if route == "exit" {
-                    Some(Action::Quit)
-                } else {
-                    Some(Action::Navigate(route.clone()))
+                KeyCode::Enter => {
+                    let (_, _, route) = &self.options[self.selected];
+                    if route == "exit" {
+                        Some(Action::Quit)
+                    } else {
+                        Some(Action::Navigate(route.clone()))
+                    }
                 }
-            }
-            Event::Key(key) if key.code == KeyCode::Char('q') => {
-                Some(Action::Quit)
-            }
+                KeyCode::Char('t') => {
+                    let _ = self.state.update(|s| s.theme = s.theme.next());
+                    None
+                }
+                KeyCode::Char('q') => Some(Action::Quit),
+                _ => None,
+            },
             _ => None,
         }
     }

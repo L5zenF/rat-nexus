@@ -139,6 +139,7 @@ impl Component for CounterPage {
 
         let counter_state = self.state.read(|s| s.clone()).expect("failed to read global state");
         let local = self.local.read(|s| s.clone()).expect("failed to read local state");
+        let theme_color = counter_state.theme.color();
 
         // Main Layout: Header, Main, Footer
         let area = frame.area();
@@ -155,7 +156,7 @@ impl Component for CounterPage {
         let header_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(0), 
+                Constraint::Min(0),
                 Constraint::Length(10), // FPS
                 Constraint::Length(20), // Clock
             ])
@@ -164,30 +165,44 @@ impl Component for CounterPage {
         let title = Paragraph::new(format!("Nexus Framework Demo - {}", self.title))
             .bold()
             .alignment(Alignment::Left)
-            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Cyan)));
+            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(theme_color)));
         frame.render_widget(title, header_chunks[0]);
 
         let fps_text = format!("{:.1} FPS", local.fps);
         let fps = Paragraph::new(fps_text)
             .style(Style::default().fg(if local.fps > 55.0 { Color::Green } else if local.fps > 30.0 { Color::Yellow } else { Color::Red }))
             .alignment(Alignment::Right)
-            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Cyan)));
+            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(theme_color)));
         frame.render_widget(fps, header_chunks[1]);
 
         let clock = Paragraph::new(local.current_time)
-            .cyan()
+            .style(Style::default().fg(theme_color))
             .alignment(Alignment::Right)
-            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::Cyan)));
+            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(theme_color)));
         frame.render_widget(clock, header_chunks[2]);
 
         // --- Render Main Area ---
+        let body_direction = if local.layout_horizontal {
+            Direction::Horizontal
+        } else {
+            Direction::Vertical
+        };
+
         let body_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30), // Left: State & Controls
-                Constraint::Percentage(40), // Center: Activity
-                Constraint::Percentage(30), // Right: Inspector
-            ])
+            .direction(body_direction)
+            .constraints(if local.layout_horizontal {
+                vec![
+                    Constraint::Percentage(30), // Left: State & Controls
+                    Constraint::Percentage(40), // Center: Activity
+                    Constraint::Percentage(30), // Right: Inspector
+                ]
+            } else {
+                vec![
+                    Constraint::Percentage(35), // Top: State & Controls
+                    Constraint::Percentage(40), // Middle: Activity
+                    Constraint::Percentage(25), // Bottom: Inspector
+                ]
+            })
             .split(main_layout[1]);
 
         // 1. GLOBAL STATE & CONTROLS
@@ -204,14 +219,14 @@ impl Component for CounterPage {
         } else if local.pulse_dec > 0 {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(theme_color)
         };
 
         let counter_block = Block::default()
             .title(" Global Counter ")
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(if local.pulse_inc > 0 { Color::Green } else if local.pulse_dec > 0 { Color::Red } else { Color::Gray }));
+            .border_style(Style::default().fg(if local.pulse_inc > 0 { Color::Green } else if local.pulse_dec > 0 { Color::Red } else { theme_color }));
 
         let counter_inner = counter_block.inner(left_chunks[0]);
         let counter_sub_layout = Layout::default()
@@ -249,18 +264,25 @@ impl Component for CounterPage {
         ]).block(counter_block);
             
         frame.render_widget(counter_p, left_chunks[0]);
-        
+
+        // Convert i64 history to u64 for sparkline (shift to positive range)
+        let min_hist = counter_state.history.iter().copied().min().unwrap_or(0);
+        let sparkline_data: Vec<u64> = counter_state.history.iter()
+            .map(|&v| (v - min_hist) as u64)
+            .collect();
         let mini_sparkline = Sparkline::default()
-            .data(&counter_state.history)
+            .data(&sparkline_data)
             .style(Style::default().fg(if local.pulse_inc > 0 { Color::Green } else if local.pulse_dec > 0 { Color::Red } else { Color::DarkGray }));
         frame.render_widget(mini_sparkline, counter_sub_layout[1]);
 
         let controls_text = vec![
-            " [L] Toggle Layout Mode ".into(),
-            " [W] Start Async Worker ".into(),
-            " [C] Clear Event Logs   ".into(),
-            " [M] Return to Menu     ".into(),
-            " [Q] Quit Application   ".into(),
+            format!(" [J/K] Inc/Dec (step: {}) ", counter_state.step).into(),
+            " [+/-] Adjust Step Size   ".into(),
+            " [R] Reset Counter        ".into(),
+            " [L] Toggle Layout Mode   ".into(),
+            " [W] Start Async Worker   ".into(),
+            " [C] Clear Event Logs     ".into(),
+            " [M] Return to Menu       ".into(),
         ];
         let controls_p = Paragraph::new(controls_text)
             .block(Block::default().title(" Framework Controls ").borders(Borders::ALL).border_type(ratatui::widgets::BorderType::Double));
@@ -301,7 +323,7 @@ impl Component for CounterPage {
                 .name("Counter")
                 .marker(symbols::Marker::Dot)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(Color::Cyan))
+                .style(Style::default().fg(theme_color))
                 .data(&history_data),
         ];
 
@@ -310,19 +332,25 @@ impl Component for CounterPage {
             .style(Style::default().fg(Color::Gray))
             .bounds([0.0, 50.0]);
 
-        let max_val = counter_state.history.iter().max().copied().unwrap_or(10) as f64;
+        let min_val = counter_state.history.iter().copied().min().unwrap_or(0) as f64;
+        let max_val = counter_state.history.iter().copied().max().unwrap_or(10) as f64;
+        let y_min = (min_val - 10.0).min(0.0);
+        let y_max = (max_val + 10.0).max(10.0);
         let y_axis = Axis::default()
             .title("Value")
             .style(Style::default().fg(Color::Gray))
-            .bounds([0.0, max_val + 10.0])
+            .bounds([y_min, y_max])
             .labels(vec![
-                ratatui::text::Span::raw("0"),
-                ratatui::text::Span::raw((max_val / 2.0).to_string()),
-                ratatui::text::Span::raw(max_val.to_string()),
+                ratatui::text::Span::raw(format!("{:.0}", y_min)),
+                ratatui::text::Span::raw(format!("{:.0}", (y_min + y_max) / 2.0)),
+                ratatui::text::Span::raw(format!("{:.0}", y_max)),
             ]);
 
         let chart = Chart::new(datasets)
-            .block(Block::default().title(" Global Counter Synchronization ").borders(Borders::ALL))
+            .block(Block::default()
+                .title(" Global Counter Synchronization ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme_color)))
             .x_axis(x_axis)
             .y_axis(y_axis);
         frame.render_widget(chart, center_chunks[2]);
@@ -343,8 +371,12 @@ impl Component for CounterPage {
         frame.render_widget(logs_list, right_chunks[0]);
 
         let inspect_text = vec![
+            format!("Counter: {} (step: {})", counter_state.counter, counter_state.step),
+            format!("Range: {} to {}", counter_state.min_value, counter_state.max_value),
+            format!("History: {} samples", counter_state.history.len()),
+            format!("Theme: {}", counter_state.theme.name()),
+            format!(""),
             format!("Area: {}x{}", area.width, area.height),
-            format!("Origin: {}, {}", area.x, area.y),
             format!("Layout: {}", if local.layout_horizontal { "Horizontal" } else { "Vertical" }),
             format!("Entities: Subscribed to 2"),
         ];
@@ -353,8 +385,9 @@ impl Component for CounterPage {
         frame.render_widget(inspector, right_chunks[1]);
 
         // --- Render Footer ---
-        let footer = Paragraph::new("Nexus v1.0 | Built with Ratatui | Press 'q' to Quit")
-            .style(Style::default().bg(Color::Blue).fg(Color::White))
+        let theme_color = counter_state.theme.color();
+        let footer = Paragraph::new(" J/K Inc/Dec │ +/- Step │ R Reset │ T Theme │ L Layout │ M Menu │ Q Quit ")
+            .style(Style::default().bg(theme_color).fg(Color::Black))
             .alignment(Alignment::Center);
         frame.render_widget(footer, main_layout[2]);
     }
@@ -367,8 +400,10 @@ impl Component for CounterPage {
                 match mouse.kind {
                     crossterm::event::MouseEventKind::Down(MouseButton::Left) => {
                         let _ = self.state.update(|s| {
-                            s.counter += 1;
-                            s.history.push(s.counter as u64);
+                            s.counter += s.step;
+                            s.max_value = s.max_value.max(s.counter);
+                            s.min_value = s.min_value.min(s.counter);
+                            s.history.push(s.counter as i64);
                             if s.history.len() > 50 { s.history.remove(0); }
                         });
                         let _ = self.local.update(|s| s.pulse_inc = 100);
@@ -377,8 +412,10 @@ impl Component for CounterPage {
                     }
                     crossterm::event::MouseEventKind::Down(MouseButton::Right) => {
                         let _ = self.state.update(|s| {
-                            s.counter -= 1;
-                            s.history.push(s.counter as u64);
+                            s.counter -= s.step;
+                            s.max_value = s.max_value.max(s.counter);
+                            s.min_value = s.min_value.min(s.counter);
+                            s.history.push(s.counter as i64);
                             if s.history.len() > 50 { s.history.remove(0); }
                         });
                         let _ = self.local.update(|s| s.pulse_dec = 100);
@@ -387,8 +424,10 @@ impl Component for CounterPage {
                     }
                     crossterm::event::MouseEventKind::ScrollUp => {
                         let _ = self.state.update(|s| {
-                            s.counter += 1;
-                            s.history.push(s.counter as u64);
+                            s.counter += s.step;
+                            s.max_value = s.max_value.max(s.counter);
+                            s.min_value = s.min_value.min(s.counter);
+                            s.history.push(s.counter as i64);
                             if s.history.len() > 50 { s.history.remove(0); }
                         });
                         let _ = self.local.update(|s| s.pulse_inc = 100);
@@ -397,8 +436,10 @@ impl Component for CounterPage {
                     }
                     crossterm::event::MouseEventKind::ScrollDown => {
                         let _ = self.state.update(|s| {
-                            s.counter -= 1;
-                            s.history.push(s.counter as u64);
+                            s.counter -= s.step;
+                            s.max_value = s.max_value.max(s.counter);
+                            s.min_value = s.min_value.min(s.counter);
+                            s.history.push(s.counter as i64);
                             if s.history.len() > 50 { s.history.remove(0); }
                         });
                         let _ = self.local.update(|s| s.pulse_dec = 100);
@@ -437,10 +478,41 @@ impl Component for CounterPage {
                 let _ = self.local.update(|s| s.logs.clear());
                 None
             }
+            Event::Key(key) if key.code == KeyCode::Char('r') => {
+                let _ = self.state.update(|s| {
+                    s.counter = 0;
+                    s.min_value = 0;
+                    s.max_value = 0;
+                    s.history = vec![0; 50];
+                });
+                self.log("Counter Reset to 0".to_string());
+                None
+            }
+            Event::Key(key) if key.code == KeyCode::Char('+') || key.code == KeyCode::Char('=') => {
+                let _ = self.state.update(|s| {
+                    s.step = (s.step + 1).min(100);
+                });
+                self.log(format!("Step increased to {}", self.state.read(|s| s.step).unwrap_or(1)));
+                None
+            }
+            Event::Key(key) if key.code == KeyCode::Char('-') => {
+                let _ = self.state.update(|s| {
+                    s.step = (s.step - 1).max(1);
+                });
+                self.log(format!("Step decreased to {}", self.state.read(|s| s.step).unwrap_or(1)));
+                None
+            }
+            Event::Key(key) if key.code == KeyCode::Char('t') => {
+                let _ = self.state.update(|s| s.theme = s.theme.next());
+                self.log("Theme Toggled".to_string());
+                None
+            }
             Event::Key(key) if key.code == KeyCode::Char('j') => {
                 let _ = self.state.update(|s| {
-                    s.counter += 1;
-                    s.history.push(s.counter as u64);
+                    s.counter += s.step;
+                    s.max_value = s.max_value.max(s.counter);
+                    s.min_value = s.min_value.min(s.counter);
+                    s.history.push(s.counter as i64);
                     if s.history.len() > 50 { s.history.remove(0); }
                 });
                 let _ = self.local.update(|s| s.pulse_inc = 100);
@@ -449,8 +521,10 @@ impl Component for CounterPage {
             }
             Event::Key(key) if key.code == KeyCode::Char('k') => {
                 let _ = self.state.update(|s| {
-                    s.counter -= 1;
-                    s.history.push(s.counter as u64);
+                    s.counter -= s.step;
+                    s.max_value = s.max_value.max(s.counter);
+                    s.min_value = s.min_value.min(s.counter);
+                    s.history.push(s.counter as i64);
                     if s.history.len() > 50 { s.history.remove(0); }
                 });
                 let _ = self.local.update(|s| s.pulse_dec = 100);

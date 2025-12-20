@@ -297,8 +297,8 @@ impl Application {
                     break;
                 }
 
-                // Lower poll duration for higher responsiveness
-                match event::poll(Duration::from_millis(20)) {
+                // Poll at ~60fps (16.67ms) for smooth animations
+                match event::poll(Duration::from_millis(16)) {
                     Ok(true) => {
                         if let Ok(e) = event::read() {
                             if event_tx.send(e).is_err() {
