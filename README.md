@@ -1,25 +1,23 @@
 # Rat-Nexus
 
-一个现代化的 Rust TUI 框架，受 [GPUI](https://github.com/zed-industries/zed) 启发，基于 [Ratatui](https://github.com/ratatui-org/ratatui) 构建。
+A modern reactive TUI framework for Rust, inspired by [GPUI](https://github.com/zed-industries/zed), built on [Ratatui](https://github.com/ratatui-org/ratatui).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 
 ![demo](./asserts/bkg.png)
 
-## 为什么选择 Rat-Nexus？
+## Features
 
-构建复杂的 TUI 应用时，你可能会遇到这些问题：
+- **Reactive State Management** — `Entity<T>` provides observable state with automatic UI updates
+- **GPUI-Style Context** — Components access themselves via `Context` with `entity_id()`, `entity()`, `weak_entity()`
+- **Clear Lifecycle Hooks** — `on_mount`, `on_enter`, `on_exit`, `on_shutdown` for precise control
+- **Cancellable Async Tasks** — `TaskTracker` prevents task leaks when components are destroyed
+- **Type-Safe Routing** — Compile-time checked routes with `define_routes!` macro
 
-- **状态管理混乱** — 手动传递状态，难以追踪变更
-- **生命周期不清晰** — 不知道何时初始化、何时清理
-- **异步任务泄漏** — 后台任务无法取消，组件销毁后仍在运行
-- **路由硬编码** — 字符串路由容易拼写错误
+## Installation
 
-Rat-Nexus 通过提供 **响应式状态**、**清晰的生命周期**、**可取消的任务** 和 **类型安全路由** 来解决这些问题。
-
-## 安装
-
-在 `Cargo.toml` 中添加依赖：
+Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -30,42 +28,34 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 ```
 
-## 快速开始
+## Quick Start
 
-一个最简单的计数器：
+A minimal counter application:
 
 ```rust
 use crossterm::event::KeyCode;
-use rat_nexus::{Action, Application, Component, Context, Entity, Event, EventContext};
+use rat_nexus::{Action, AnyComponent, Application, Component, Context, Entity, Event, EventContext};
 use ratatui::{
     layout::{Alignment, Constraint, Layout},
-    style::{Color, Stylize},
     widgets::{Block, BorderType, Paragraph},
 };
 use std::sync::{Arc, Mutex};
 
-// 1. 定义状态
+// 1. Define state
 struct CounterState {
     count: i32,
 }
 
-// 2. 定义组件
+// 2. Define component
 struct Counter {
     state: Entity<CounterState>,
 }
 
-// 3. 实现 Component trait
+// 3. Implement Component trait
 impl Component for Counter {
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        // watch = subscribe + read，状态变更时自动重渲染
+        // watch = subscribe + read, auto re-renders on state change
         let count = cx.watch(&self.state, |s| s.count).unwrap_or(0);
-
-        let area = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(5),
-            Constraint::Fill(1),
-        ])
-        .split(frame.area())[1];
 
         let area = Layout::horizontal([
             Constraint::Fill(1),
@@ -85,8 +75,8 @@ impl Component for Counter {
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
         if let Event::Key(key) = event {
             match key.code {
-                KeyCode::Char('j') => { self.state.update(|s| s.count += 1); }
-                KeyCode::Char('k') => { self.state.update(|s| s.count -= 1); }
+                KeyCode::Char('j') => { let _ = self.state.update(|s| s.count += 1); }
+                KeyCode::Char('k') => { let _ = self.state.update(|s| s.count -= 1); }
                 KeyCode::Char('q') => return Some(Action::Quit),
                 _ => {}
             }
@@ -95,46 +85,93 @@ impl Component for Counter {
     }
 }
 
-// 4. 启动应用
+// 4. Run application
 fn main() -> anyhow::Result<()> {
     Application::new().run(|cx| {
         let state = cx.new_entity(CounterState { count: 0 });
-        cx.set_root(Arc::new(Mutex::new(Counter { state })))?;
+        let counter = Counter { state };
+
+        // Wrap component in Entity<dyn AnyComponent>
+        let root: Entity<dyn AnyComponent> = Entity::from_arc(
+            Arc::new(Mutex::new(counter)) as Arc<Mutex<dyn AnyComponent>>
+        );
+        cx.set_root(root)?;
         Ok(())
     })
 }
 ```
 
-## 核心概念
+## Core Concepts
 
-### Entity：响应式状态
+### Entity: Reactive State
 
-`Entity<T>` 是状态的容器，当状态变更时自动通知订阅者：
+`Entity<T>` is a reactive state container that notifies subscribers on changes:
 
 ```rust
-// 创建
+// Create
 let state = cx.new_entity(MyState::default());
 
-// 更新（自动触发重渲染）
-state.update(|s| s.counter += 1);
+// Each entity has a unique ID
+let id: EntityId = state.entity_id();
 
-// 读取
-let value = state.read(|s| s.counter).unwrap();
+// Update (automatically triggers re-render)
+state.update(|s| s.counter += 1)?;
 
-// 订阅 + 读取（推荐在 render 中使用）
+// Read
+let value = state.read(|s| s.counter)?;
+
+// Subscribe + Read (recommended in render)
 let value = cx.watch(&state, |s| s.counter).unwrap();
+
+// Create weak reference
+let weak: WeakEntity<MyState> = state.downgrade();
 ```
 
-### Component：组件生命周期
+### Context: GPUI-Style Component Access
+
+`Context<V>` binds to a component and provides access to its entity:
+
+```rust
+impl Component for MyComponent {
+    fn on_mount(&mut self, cx: &mut Context<Self>) {
+        // Get component's EntityId
+        if let Some(id) = cx.entity_id() {
+            println!("Component mounted with ID: {}", id);
+        }
+
+        // Get weak reference for async tasks
+        if let Some(weak) = cx.weak_entity() {
+            cx.spawn(move |app| async move {
+                // Safe access to component from async context
+                if let Some(entity) = weak.upgrade() {
+                    entity.update(|comp| {
+                        // Update component state
+                    });
+                }
+                app.refresh();
+            });
+        }
+    }
+
+    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+        // Access app context
+        let frame_count = cx.app.frame_count();
+
+        // Subscribe to state changes
+        let value = cx.watch(&self.state, |s| s.value).unwrap();
+    }
+}
+```
+
+### Component Lifecycle
 
 ```rust
 impl Component for MyPage {
-    /// 首次挂载，只调用一次
-    /// 适合：启动后台任务、初始化资源
+    /// Called once when first mounted
+    /// Use for: starting background tasks, initializing resources
     fn on_mount(&mut self, cx: &mut Context<Self>) {
         let handle = cx.spawn_task(|app| async move {
             loop {
-                // 定时刷新...
                 app.refresh();
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
@@ -142,26 +179,26 @@ impl Component for MyPage {
         self.tasks.track(handle);
     }
 
-    /// 每次进入视图
-    /// 适合：重置临时状态、刷新数据
+    /// Called each time the view becomes active
+    /// Use for: resetting transient state, refreshing data
     fn on_enter(&mut self, _cx: &mut Context<Self>) {
         // ...
     }
 
-    /// 离开视图
-    /// 适合：暂停任务、保存状态
+    /// Called when leaving the view
+    /// Use for: pausing tasks, saving state
     fn on_exit(&mut self, _cx: &mut Context<Self>) {
         self.tasks.abort_all();
     }
 
-    /// 应用退出前
-    /// 适合：持久化、清理资源
+    /// Called before application exits
+    /// Use for: persistence, cleanup
     fn on_shutdown(&mut self, _cx: &mut Context<Self>) {
         // ...
     }
 
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        // 使用 frame.area() 获取渲染区域
+        // Use frame.area() to get rendering area
     }
 
     fn handle_event(&mut self, event: Event, cx: &mut EventContext<Self>) -> Option<Action> {
@@ -170,9 +207,9 @@ impl Component for MyPage {
 }
 ```
 
-### TaskTracker：可取消的异步任务
+### TaskTracker: Cancellable Async Tasks
 
-避免任务泄漏，组件销毁时自动清理：
+Prevents task leaks with automatic cleanup on component destruction:
 
 ```rust
 use rat_nexus::TaskTracker;
@@ -183,7 +220,7 @@ struct MyComponent {
 
 impl Component for MyComponent {
     fn on_mount(&mut self, cx: &mut Context<Self>) {
-        // spawn_task 返回可取消的 TaskHandle
+        // spawn_task returns a cancellable TaskHandle
         let handle = cx.spawn_task(|app| async move {
             loop {
                 app.refresh();
@@ -191,27 +228,27 @@ impl Component for MyComponent {
             }
         });
 
-        // 追踪任务
+        // Track the task
         self.tasks.track(handle);
     }
 
     fn on_exit(&mut self, _cx: &mut Context<Self>) {
-        // 取消所有任务
+        // Cancel all tracked tasks
         self.tasks.abort_all();
     }
 }
 
-// TaskTracker 实现了 Drop，析构时自动 abort_all()
+// TaskTracker implements Drop, auto-aborts on destruction
 ```
 
-### Router：类型安全路由
+### Router: Type-Safe Routing
 
-编译时检查路由名称，告别拼写错误：
+Compile-time route checking eliminates typos:
 
 ```rust
 use rat_nexus::{define_routes, Router};
 
-// 定义路由枚举
+// Define route enum
 define_routes! {
     Menu,
     Counter,
@@ -219,10 +256,10 @@ define_routes! {
     Snake,
 }
 
-// 使用
+// Usage
 let mut router = Router::new(Route::Menu);
 
-router.navigate(Route::Counter);  // 编译时类型检查
+router.navigate(Route::Counter);  // Compile-time type checking
 
 if router.can_go_back() {
     router.go_back();
@@ -235,87 +272,133 @@ match router.current() {
 }
 ```
 
-## API 参考
+## API Reference
 
-### Context 方法
+### Context Methods
 
-| 方法 | 说明 |
-|------|------|
-| `cx.watch(&entity, \|s\| ...)` | 订阅并读取状态 |
-| `cx.subscribe(&entity)` | 仅订阅状态变更 |
-| `cx.spawn(f)` | 启动后台任务（不可取消） |
-| `cx.spawn_task(f)` | 启动后台任务（返回 TaskHandle） |
-| `cx.notify()` | 手动触发重渲染 |
-| `cx.cast::<U>()` | 转换 Context 类型 |
-| `cx.app` | 访问 AppContext |
+| Method | Description |
+|--------|-------------|
+| `cx.entity_id()` | Get EntityId of bound component |
+| `cx.entity()` | Get strong Entity handle |
+| `cx.weak_entity()` | Get weak Entity handle |
+| `cx.watch(&entity, \|s\| ...)` | Subscribe and read state |
+| `cx.subscribe(&entity)` | Subscribe to state changes only |
+| `cx.spawn(f)` | Spawn background task (non-cancellable) |
+| `cx.spawn_task(f)` | Spawn background task (returns TaskHandle) |
+| `cx.notify()` | Manually trigger re-render |
+| `cx.cast::<U>()` | Convert Context type for child components |
+| `cx.app` | Access AppContext |
 
-### Component 生命周期
+### Component Lifecycle
 
-| 方法 | 调用时机 | 用途 |
-|------|---------|------|
-| `on_mount` | 首次挂载（仅一次） | 启动后台任务 |
-| `on_enter` | 每次进入视图 | 刷新数据 |
-| `on_exit` | 离开视图 | 暂停/取消任务 |
-| `on_shutdown` | 应用退出 | 持久化/清理 |
-| `render` | 每次重渲染 | 绘制 UI |
-| `handle_event` | 收到事件 | 处理输入 |
+| Method | When Called | Use Case |
+|--------|-------------|----------|
+| `on_mount` | First mount (once) | Start background tasks |
+| `on_enter` | Each view entry | Refresh data |
+| `on_exit` | Leaving view | Pause/cancel tasks |
+| `on_shutdown` | App exit | Persistence/cleanup |
+| `render` | Each re-render | Draw UI |
+| `handle_event` | Event received | Handle input |
 
-### 完整导出
+### Entity Methods
+
+| Method | Description |
+|--------|-------------|
+| `Entity::new(value)` | Create new entity |
+| `Entity::from_arc(arc)` | Create from Arc<Mutex<T>> |
+| `entity.entity_id()` | Get unique EntityId |
+| `entity.update(\|s\| ...)` | Update state, notify subscribers |
+| `entity.read(\|s\| ...)` | Read state |
+| `entity.downgrade()` | Get WeakEntity |
+| `entity.subscribe()` | Get change receiver |
+
+### Public Exports
 
 ```rust
 pub use rat_nexus::{
-    // 应用
+    // Application
     Application, AppContext, Context, EventContext,
-    // 组件
+    // Component
     Component, Event, Action, AnyComponent,
-    // 状态
-    Entity, WeakEntity,
-    // 路由
-    Router, define_routes,
-    // 任务
+    // State
+    Entity, WeakEntity, EntityId,
+    // Router
+    Router, Route, define_routes,
+    // Tasks
     TaskHandle, TaskTracker,
-    // 错误
+    // Error
     Error, Result,
 };
 ```
 
-## 运行示例
+## Running the Demo
 
 ```bash
-# 运行 demo
+# Run demo application
 cargo run
 
-# 操作
-# ↑/↓/Enter - 导航菜单
-# j/k       - 增减计数器
-# w         - 启动异步任务
-# m         - 返回菜单
-# q         - 退出
+# Controls
+# ↑/↓/Enter - Navigate menu
+# j/k       - Increment/decrement counter
+# w         - Start async worker
+# m         - Return to menu
+# q         - Quit
 
-# 贪吃蛇
-# ←↑↓→/wasd - 移动
-# Space     - 暂停
-# r         - 重新开始
+# Snake game
+# ←↑↓→/wasd - Move
+# Space     - Pause
+# r         - Restart
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 .
-├── rat-nexus/              # 核心框架
+├── rat-nexus/              # Core framework
 │   └── src/
 │       ├── application.rs  # Application, Context, AppContext
-│       ├── component/      # Component trait
-│       ├── state/          # Entity 响应式状态
+│       ├── component/      # Component trait, AnyComponent
+│       ├── state/          # Entity, WeakEntity, EntityId
 │       ├── router/         # Router, define_routes!
 │       ├── task.rs         # TaskHandle, TaskTracker
-│       └── lib.rs          # 公开 API
+│       ├── error.rs        # Error types
+│       └── lib.rs          # Public API
 │
-└── rat-demo/               # 示例应用
+└── rat-demo/               # Example application
     └── src/
-        ├── pages/          # 页面组件
-        ├── app.rs          # 根组件
-        └── main.rs         # 入口
+        ├── pages/          # Page components
+        ├── model.rs        # State definitions
+        ├── app.rs          # Root component
+        └── main.rs         # Entry point
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Application                         │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
+│  │  AppContext │  │   Entity    │  │   TaskTracker   │  │
+│  │  - refresh  │  │  - EntityId │  │  - track()      │  │
+│  │  - spawn    │  │  - update() │  │  - abort_all()  │  │
+│  │  - set_root │  │  - read()   │  │                 │  │
+│  └─────────────┘  └─────────────┘  └─────────────────┘  │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────┐    │
+│  │                Context<V>                        │    │
+│  │  - entity_id() / entity() / weak_entity()       │    │
+│  │  - watch() / subscribe() / notify()             │    │
+│  │  - spawn() / spawn_task()                       │    │
+│  └─────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────┐    │
+│  │              Component Trait                     │    │
+│  │  on_mount → on_enter → render ⟷ handle_event   │    │
+│  │                         ↓                        │    │
+│  │                      on_exit → on_shutdown       │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ## License

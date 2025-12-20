@@ -4,7 +4,7 @@ mod model;
 mod pages;
 mod app;
 
-use rat_nexus::Application;
+use rat_nexus::{Application, Entity, AnyComponent};
 use crate::model::AppState;
 use crate::app::Root;
 
@@ -14,7 +14,10 @@ fn main() -> anyhow::Result<()> {
     app.run(move |cx| {
         let shared_state = cx.new_entity(AppState::default());
         let root = Root::new(shared_state, cx);
-        let root = std::sync::Arc::new(std::sync::Mutex::new(root));
+        // Wrap the root component in an Entity for GPUI-style state management
+        let root: Entity<dyn AnyComponent> = Entity::from_arc(
+            std::sync::Arc::new(std::sync::Mutex::new(root)) as std::sync::Arc<std::sync::Mutex<dyn AnyComponent>>
+        );
         cx.set_root(root)?;
 
         // Optional: Startup task

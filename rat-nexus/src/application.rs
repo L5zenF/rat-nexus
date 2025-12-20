@@ -1,7 +1,7 @@
 //! High‑level Application abstraction inspired by GPUI.
 
 use crate::component::traits::{Event, Action, Component, AnyComponent};
-use crate::state::{Entity, WeakEntity};
+use crate::state::{Entity, WeakEntity, EntityId};
 use ratatui::prelude::*;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CrosstermEvent, KeyEventKind},
@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 pub struct AppContext {
     /// The root component to render, if set by the user.
-    root: Arc<Mutex<Option<Arc<Mutex<dyn AnyComponent>>>>>,
+    root: Arc<Mutex<Option<Entity<dyn AnyComponent>>>>,
     /// Internal: Channel to trigger a re-render.
     re_render_tx: mpsc::UnboundedSender<()>,
     /// Internal: Total frames rendered.
@@ -68,7 +68,7 @@ impl AppContext {
     }
 
     /// Set the root component of the application.
-    pub fn set_root(&self, root: Arc<Mutex<dyn AnyComponent>>) -> crate::Result<()> {
+    pub fn set_root(&self, root: Entity<dyn AnyComponent>) -> crate::Result<()> {
         let mut guard = self.root.lock().map_err(|_| crate::Error::LockPoisoned)?;
         *guard = Some(root);
         self.refresh();
@@ -176,6 +176,24 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         }
     }
 
+    /// Get the entity ID of the component this context is bound to.
+    /// Returns None if the context was not created with a handle.
+    pub fn entity_id(&self) -> Option<EntityId> {
+        self.handle.as_ref().map(|h| h.entity_id())
+    }
+
+    /// Get a weak handle to the component this context is bound to.
+    /// Returns None if the context was not created with a handle.
+    pub fn weak_entity(&self) -> Option<WeakEntity<V>> {
+        self.handle.clone()
+    }
+
+    /// Get a strong handle to the component this context is bound to.
+    /// Returns None if the context was not created with a handle or if the entity was dropped.
+    pub fn entity(&self) -> Option<Entity<V>> {
+        self.handle.as_ref().and_then(|h| h.upgrade())
+    }
+
     /// Explicitly trigger a re-render.
     pub fn notify(&self) {
         self.app.refresh();
@@ -212,9 +230,11 @@ impl Application {
         setup(&app_context)?;
         drop(_guard);
 
-        let actual_root = {
+        let actual_root: Entity<dyn AnyComponent> = {
             let guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned"))?;
-            guard.as_ref().map(Arc::clone).unwrap_or_else(|| Arc::new(Mutex::new(DummyView)))
+            guard.as_ref().map(Entity::clone).unwrap_or_else(|| {
+                Entity::from_arc(Arc::new(Mutex::new(DummyView)) as Arc<Mutex<dyn AnyComponent>>)
+            })
         };
 
         let result = rt.block_on(async move {
@@ -227,7 +247,7 @@ impl Application {
         result
     }
 
-    async fn run_loop(&self, app: AppContext, root: Arc<Mutex<dyn AnyComponent>>, re_render_rx: mpsc::UnboundedReceiver<()>) -> anyhow::Result<()> {
+    async fn run_loop(&self, app: AppContext, root: Entity<dyn AnyComponent>, re_render_rx: mpsc::UnboundedReceiver<()>) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture, event::EnableFocusChange)?;
@@ -236,10 +256,12 @@ impl Application {
 
         // Lifecycle: Call on_mount (first time) and on_enter (entering view) on the root component
         {
-            let mut guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned during on_mount"))?;
-            let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app));
-            guard.on_mount_any(&mut cx);
-            guard.on_enter_any(&mut cx);
+            let weak = root.downgrade();
+            let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+            root.update(|comp| {
+                comp.on_mount_any(&mut cx);
+                comp.on_enter_any(&mut cx);
+            }).map_err(|_| anyhow::anyhow!("Root mutex poisoned during on_mount"))?;
         }
 
         let result = self.run_app_loop(app, &mut terminal, root, re_render_rx).await;
@@ -260,7 +282,7 @@ impl Application {
         &self,
         app: AppContext,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        root: Arc<Mutex<dyn AnyComponent>>,
+        root: Entity<dyn AnyComponent>,
         mut re_render_rx: mpsc::UnboundedReceiver<()>,
     ) -> anyhow::Result<()> {
         // Initial render
@@ -307,16 +329,22 @@ impl Application {
                     };
 
                     if let Some(event) = internal_event {
-                        let mut cx = EventContext::<dyn AnyComponent>::new(AppContext::clone(&app));
+                        let weak = root.downgrade();
+                        let mut cx = EventContext::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
 
-                        let mut guard = root.lock().map_err(|_| anyhow::anyhow!("Root mutex poisoned during event"))?;
-                        let action = guard.handle_event_any(event, &mut cx);
+                        let action = root.update(|comp| {
+                            comp.handle_event_any(event, &mut cx)
+                        }).map_err(|_| anyhow::anyhow!("Root mutex poisoned during event"))?;
+
                         app.refresh(); // Trigger refresh after any event handling
 
                         if let Some(action) = action {
                             match action {
                                 Action::Quit => {
-                                    guard.on_shutdown_any(&mut cx);
+                                    let weak = root.downgrade();
+                                    let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+                                    root.update(|comp| comp.on_shutdown_any(&mut cx))
+                                        .map_err(|_| anyhow::anyhow!("Root mutex poisoned during shutdown"))?;
                                     return Ok(());
                                 }
                                 _ => {}
@@ -329,11 +357,12 @@ impl Application {
                     // Drain all pending refresh requests to compact them into a single frame
                     while re_render_rx.try_recv().is_ok() {}
 
+                    let weak = root.downgrade();
                     terminal.draw(|frame| {
                         app.frame_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app));
-                        let mut guard = root.lock().expect("Root mutex poisoned during render");
-                        guard.render_any(frame, &mut cx);
+                        let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+                        root.update(|comp| comp.render_any(frame, &mut cx))
+                            .expect("Root mutex poisoned during render");
                     })?;
                 }
             }
