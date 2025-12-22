@@ -1,7 +1,7 @@
 //! Flappy Bird - Classic arcade game clone
 //! Showcases: Real-time game loop, collision detection, Entity state, Componentization
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker, Page, AppContext};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
     widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Rectangle, Points, Context as CanvasContext}},
@@ -240,8 +240,8 @@ pub struct FlappyPage {
     tasks: TaskTracker,
 }
 
-impl FlappyPage {
-    pub fn new(cx: &rat_nexus::AppContext) -> Self {
+impl Page for FlappyPage {
+    fn build(cx: &AppContext) -> Self {
         Self {
             state: cx.new_entity(FlappyState::default()),
             tasks: TaskTracker::new(),

@@ -7,7 +7,7 @@
 //! - Table with dynamic data
 //! - Complex layout composition
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, AppContext, TaskTracker};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, AppContext, TaskTracker, Page};
 use crate::model::{AppState, MonitorState};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment, Rect},
@@ -27,8 +27,10 @@ pub struct MonitorPage {
     tasks: TaskTracker,
 }
 
-impl MonitorPage {
-    pub fn new(app_state: Entity<AppState>, cx: &AppContext) -> Self {
+impl Page for MonitorPage {
+    fn build(cx: &AppContext) -> Self {
+        // Get shared state from context
+        let app_state = cx.get::<Entity<AppState>>().expect("AppState not set in context");
         Self {
             app_state,
             state: cx.new_entity(MonitorState::default()),

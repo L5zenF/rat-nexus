@@ -1,7 +1,7 @@
 //! Particles Demo - Animated particle system
 //! Showcases: spawn_task, Entity updates, real-time animation, TaskTracker
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker, Page, AppContext};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
     widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Points}},
@@ -33,8 +33,8 @@ pub struct ParticlesPage {
     tasks: TaskTracker,
 }
 
-impl ParticlesPage {
-    pub fn new(cx: &rat_nexus::AppContext) -> Self {
+impl Page for ParticlesPage {
+    fn build(cx: &AppContext) -> Self {
         Self {
             state: cx.new_entity(ParticlesState { spawn_x: 50.0, spawn_y: 25.0, ..Default::default() }),
             tasks: TaskTracker::new(),

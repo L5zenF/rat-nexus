@@ -8,11 +8,16 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::io::{self, stdout};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+
+/// Type-erased storage for application-level shared state.
+type StateMap = HashMap<TypeId, Arc<dyn Any + Send + Sync>>;
 
 pub struct AppContext {
     /// The root component to render, if set by the user.
@@ -21,6 +26,8 @@ pub struct AppContext {
     re_render_tx: mpsc::UnboundedSender<()>,
     /// Internal: Total frames rendered.
     frame_count: Arc<std::sync::atomic::AtomicU64>,
+    /// Application-level shared state storage (TypeMap pattern).
+    state: Arc<RwLock<StateMap>>,
 }
 
 impl Clone for AppContext {
@@ -29,6 +36,7 @@ impl Clone for AppContext {
             root: Arc::clone(&self.root),
             re_render_tx: mpsc::UnboundedSender::clone(&self.re_render_tx),
             frame_count: Arc::clone(&self.frame_count),
+            state: Arc::clone(&self.state),
         }
     }
 }
@@ -83,6 +91,50 @@ impl AppContext {
     /// Get the total number of frames rendered.
     pub fn frame_count(&self) -> u64 {
         self.frame_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Store a value in the application state.
+    /// Use this to share state across components.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let shared = cx.new_entity(AppState::default());
+    /// cx.set(shared);  // Store for later retrieval
+    /// ```
+    pub fn set<T>(&self, value: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        if let Ok(mut guard) = self.state.write() {
+            guard.insert(TypeId::of::<T>(), Arc::new(value));
+        }
+    }
+
+    /// Retrieve a value from the application state.
+    /// Returns None if the type was not previously stored.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let shared: Entity<AppState> = cx.get().expect("AppState not set");
+    /// ```
+    pub fn get<T>(&self) -> Option<T>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        self.state
+            .read()
+            .ok()
+            .and_then(|guard| guard.get(&TypeId::of::<T>()).cloned())
+            .and_then(|arc| arc.downcast::<T>().ok())
+            .map(|arc| (*arc).clone())
+    }
+
+    /// Check if a type is stored in the application state.
+    pub fn has<T: 'static>(&self) -> bool {
+        self.state
+            .read()
+            .map(|guard| guard.contains_key(&TypeId::of::<T>()))
+            .unwrap_or(false)
     }
 }
 
@@ -282,6 +334,7 @@ impl Application {
             root: Arc::clone(&root),
             re_render_tx,
             frame_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            state: Arc::new(RwLock::new(HashMap::new())),
         };
 
         let _guard = rt.enter();

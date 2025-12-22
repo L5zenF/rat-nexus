@@ -12,18 +12,18 @@ fn main() -> anyhow::Result<()> {
     let app = Application::new();
 
     app.run(move |cx| {
+        // Store shared state in context - pages will access via cx.get()
         let shared_state = cx.new_entity(AppState::default());
-        let root = Root::new(shared_state, cx);
+        cx.set(shared_state);
+
+        // Create root app - the macro generates new() that calls Page::build() for each page
+        let root = Root::new(cx);
+
         // Wrap the root component in an Entity for GPUI-style state management
         let root: Entity<dyn AnyComponent> = Entity::from_arc(
             std::sync::Arc::new(std::sync::Mutex::new(root)) as std::sync::Arc<std::sync::Mutex<dyn AnyComponent>>
         );
         cx.set_root(root)?;
-
-        // Optional: Startup task
-        cx.spawn(|_| async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        });
 
         Ok(())
     })

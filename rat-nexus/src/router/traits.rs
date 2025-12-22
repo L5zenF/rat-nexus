@@ -119,6 +119,193 @@ macro_rules! define_routes {
     };
 }
 
+/// Define an application with automatic routing and component dispatch.
+///
+/// This macro generates a Root component that automatically handles:
+/// - RootRoute enum definition
+/// - Root struct with router and all page fields
+/// - Root::new(cx) with automatic page construction via Page::build()
+/// - Complete Component implementation with routing and lifecycle dispatch
+/// - Navigation action handling
+///
+/// Minimal syntax - just list the routes and page types!
+///
+/// # Example
+/// ```ignore
+/// use rat_nexus::define_app;
+/// use crate::pages::{Menu, MonitorPage, TimerPage};
+///
+/// define_app! {
+///     Menu => menu: Menu,
+///     Monitor => monitor: MonitorPage,
+///     Timer => timer: TimerPage,
+/// }
+///
+/// // Automatically creates:
+/// // - `enum RootRoute { Menu, Monitor, Timer }`
+/// // - `pub struct Root { router, menu, monitor, timer }`
+/// // - `impl Root { fn new(cx: &AppContext) -> Self }`
+/// // - `impl Component for Root` with full routing
+///
+/// // In main.rs:
+/// // let root = Root::new(cx);
+/// ```
+#[macro_export]
+macro_rules! define_app {
+    // Syntax 1: Simple - just routes, first route is default
+    (
+        $(
+            $route:ident => $field:ident : $page:ty
+        ),* $(,)?
+    ) => {
+        define_app!(@impl (Menu) $($route => $field : $page),*);
+    };
+
+    // Syntax 2: Full - with #[Root(default=...)] attribute
+    (
+        #[Root(default=$default_route:ident)]
+        pub struct Root {
+            $(
+                $route:ident => $field:ident : $page:ty
+            ),* $(,)?
+        }
+    ) => {
+        define_app!(@impl ($default_route) $($route => $field : $page),*);
+    };
+
+    // Internal: actual implementation - takes default route and routes
+    (@impl ($default_route:ident) $($route:ident => $field:ident : $page:ty),*) => {
+        $crate::paste::paste! {
+            // Generate RootRoute enum
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            pub enum RootRoute {
+                $($route),*
+            }
+
+            impl Default for RootRoute {
+                fn default() -> Self {
+                    RootRoute::$default_route
+                }
+            }
+
+            impl std::fmt::Display for RootRoute {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        $(Self::$route => write!(f, stringify!($route))),*
+                    }
+                }
+            }
+
+            // Generate Root struct
+            pub struct Root {
+                router: $crate::Router<RootRoute>,
+                $($field: $page),*
+            }
+
+            impl Root {
+                /// Create a new Root instance.
+                /// All pages are constructed via `Page::build(cx)`.
+                pub fn new(cx: &$crate::AppContext) -> Self {
+                    Self {
+                        router: $crate::Router::new(RootRoute::default()),
+                        $($field: <$page as $crate::Page>::build(cx)),*
+                    }
+                }
+
+                /// Get the current route
+                pub fn current_route(&self) -> &RootRoute {
+                    self.router.current()
+                }
+
+                /// Navigate to a route
+                pub fn navigate(&mut self, route: RootRoute) {
+                    self.router.navigate(route);
+                }
+
+                /// Go back to previous route
+                pub fn go_back(&mut self) -> bool {
+                    self.router.go_back()
+                }
+            }
+
+            impl $crate::Component for Root {
+                fn on_mount(&mut self, cx: &mut $crate::Context<Self>) {
+                    $(self.$field.on_mount(&mut cx.cast());)*
+                }
+
+                fn on_enter(&mut self, cx: &mut $crate::Context<Self>) {
+                    match self.router.current() {
+                        $(RootRoute::$route => self.$field.on_enter(&mut cx.cast())),*
+                    }
+                }
+
+                fn on_exit(&mut self, cx: &mut $crate::Context<Self>) {
+                    match self.router.current() {
+                        $(RootRoute::$route => self.$field.on_exit(&mut cx.cast())),*
+                    }
+                }
+
+                fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut $crate::Context<Self>) {
+                    match self.router.current() {
+                        $(RootRoute::$route => self.$field.render(frame, &mut cx.cast())),*
+                    }
+                }
+
+                fn handle_event(&mut self, event: $crate::Event, cx: &mut $crate::EventContext<Self>) -> Option<$crate::Action> {
+                    let current = *self.router.current();
+                    let action = match current {
+                        $(RootRoute::$route => self.$field.handle_event(event, &mut cx.cast())),*
+                    };
+
+                    // Handle navigation actions
+                    if let Some(action) = action {
+                        match &action {
+                            $crate::Action::Navigate(route_str) => {
+                                // Call on_exit for current page
+                                match current {
+                                    $(RootRoute::$route => self.$field.on_exit(&mut cx.cast())),*
+                                }
+
+                                // Parse route string and navigate
+                                let route_lower = route_str.to_lowercase();
+                                $(
+                                    if route_lower == stringify!($route).to_lowercase() {
+                                        self.router.navigate(RootRoute::$route);
+                                    }
+                                )*
+
+                                // Call on_enter for new page
+                                match self.router.current() {
+                                    $(RootRoute::$route => self.$field.on_enter(&mut cx.cast())),*
+                                }
+                                None
+                            }
+                            $crate::Action::Back => {
+                                // Call on_exit for current page
+                                match current {
+                                    $(RootRoute::$route => self.$field.on_exit(&mut cx.cast())),*
+                                }
+
+                                if self.router.go_back() {
+                                    // Call on_enter for previous page
+                                    match self.router.current() {
+                                        $(RootRoute::$route => self.$field.on_enter(&mut cx.cast())),*
+                                    }
+                                }
+                                None
+                            }
+                            $crate::Action::Quit => Some($crate::Action::Quit),
+                            $crate::Action::Noop => None,
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

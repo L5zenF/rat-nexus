@@ -1,4 +1,4 @@
-use rat_nexus::{Component, Context, EventContext, Event, Action, Route, Entity};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Route, Entity, Page, AppContext};
 use ratatui::widgets::Paragraph;
 use crossterm::event::KeyCode;
 use crate::model::AppState;
@@ -9,8 +9,10 @@ pub struct Menu {
     state: Entity<AppState>,
 }
 
-impl Menu {
-    pub fn new(state: Entity<AppState>) -> Self {
+impl Page for Menu {
+    fn build(cx: &AppContext) -> Self {
+        // Get shared state from context (set during app initialization)
+        let state = cx.get::<Entity<AppState>>().expect("AppState not set in context");
         Self {
             selected: 0,
             options: vec![

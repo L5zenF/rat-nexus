@@ -1,7 +1,7 @@
 //! Timer Demo - Stopwatch with lap times
 //! Showcases: Entity state, spawn_task, TaskTracker, async updates
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker, Page, AppContext};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
     widgets::{Block, Borders, Paragraph, List, ListItem, BorderType},
@@ -22,8 +22,8 @@ pub struct TimerPage {
     tasks: TaskTracker,
 }
 
-impl TimerPage {
-    pub fn new(cx: &rat_nexus::AppContext) -> Self {
+impl Page for TimerPage {
+    fn build(cx: &AppContext) -> Self {
         Self {
             state: cx.new_entity(TimerState::default()),
             tasks: TaskTracker::new(),

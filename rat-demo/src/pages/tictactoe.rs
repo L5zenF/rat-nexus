@@ -1,7 +1,7 @@
 //! Gomoku (Five in a Row) - Human vs AI game
 //! Showcases: Component composition, AI heuristics, State management, Canvas rendering, Mouse support
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity};
+use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, Page, AppContext};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment, Rect},
     widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Line as CanvasLine, Circle}},
@@ -24,14 +24,6 @@ pub enum Cell {
 }
 
 impl Cell {
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            Cell::Empty => "·",
-            Cell::Black => "●",
-            Cell::White => "○",
-        }
-    }
-
     pub fn color(&self) -> Color {
         match self {
             Cell::Empty => Color::DarkGray,
@@ -465,14 +457,16 @@ pub struct TicTacToePage {
     board_area: Rect,  // Store separately to avoid update in render
 }
 
-impl TicTacToePage {
-    pub fn new(cx: &rat_nexus::AppContext) -> Self {
+impl Page for TicTacToePage {
+    fn build(cx: &AppContext) -> Self {
         Self {
             state: cx.new_entity(GomokuState::default()),
             board_area: Rect::default(),
         }
     }
+}
 
+impl TicTacToePage {
     fn render_board(&self, frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
         let winning_line = state.winning_line.clone();
         let last_move = state.board.last_move;
