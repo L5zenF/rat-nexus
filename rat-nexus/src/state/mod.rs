@@ -72,6 +72,32 @@ impl<T: ?Sized + Send + Sync> Entity<T> {
         Ok(res)
     }
 
+    /// Update the inner value with a Context bound to this entity.
+    /// This is the GPUI-style update that provides a properly bound Context for async operations.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Instead of:
+    /// let mut cx = cx.cast::<MyComponent>();
+    /// entity.update(|c| c.handle_event(event, &mut cx));
+    ///
+    /// // Use:
+    /// entity.update_with_cx(&cx.app, |c, cx| c.handle_event(event, cx));
+    /// ```
+    pub fn update_with_cx<F, R>(&self, app: &crate::AppContext, f: F) -> crate::Result<R>
+    where
+        T: 'static,
+        F: FnOnce(&mut T, &mut crate::Context<T>) -> R,
+    {
+        let weak = self.downgrade();
+        let mut cx = crate::Context::new(app.clone(), weak);
+        let mut guard = self.inner.lock().map_err(|_| crate::Error::LockPoisoned)?;
+        let res = f(&mut *guard, &mut cx);
+        drop(guard);
+        let _ = self.tx.send(());
+        Ok(res)
+    }
+
     /// Read the inner value using a closure.
     pub fn read<F, R>(&self, f: F) -> crate::Result<R>
     where

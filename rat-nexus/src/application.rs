@@ -87,28 +87,37 @@ impl AppContext {
 }
 
 /// A specialized context passed to component methods.
+/// Inspired by GPUI's Context design - always bound to an entity.
 /// Note: For rendering area, use `frame.area()` instead.
 pub struct Context<V: ?Sized + Send + Sync> {
-    pub app: AppContext,
-    pub handle: Option<WeakEntity<V>>,
+    app: AppContext,
+    /// The entity this context is bound to. When the context is "cast" to another type
+    /// (for calling child components), this becomes None. Use `entity()` for self-reference
+    /// and `weak_entity()` for async operations.
+    handle: Option<WeakEntity<V>>,
+}
+
+// Deref to AppContext for convenient access to app methods
+impl<V: ?Sized + Send + Sync> std::ops::Deref for Context<V> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
 }
 
 impl<V: ?Sized + Send + Sync> Context<V> {
-    pub fn new(app: AppContext) -> Self {
-        Self {
-            app,
-            handle: None,
-        }
-    }
-
-    pub fn with_handle(app: AppContext, handle: WeakEntity<V>) -> Self {
+    /// Create a context bound to an entity. This is the primary constructor.
+    pub fn new(app: AppContext, handle: WeakEntity<V>) -> Self {
         Self {
             app,
             handle: Some(handle),
         }
     }
 
-    /// Access the underlying AppContext.
+    /// Get a reference to the underlying AppContext.
+    /// Use this to access AppContext methods that are shadowed by Context methods
+    /// (like spawn/spawn_task for unbound async tasks).
     pub fn app(&self) -> &AppContext {
         &self.app
     }
@@ -128,18 +137,6 @@ impl<V: ?Sized + Send + Sync> Context<V> {
 
     /// Watch an entity: subscribe to changes and read the current value.
     /// This is a convenience method that combines `subscribe` and `entity.read`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// fn render(&mut self, frame: &mut Frame, cx: &mut Context<Self>) {
-    ///     // Instead of:
-    ///     // cx.subscribe(&self.state);
-    ///     // let counter = self.state.read(|s| s.counter).unwrap();
-    ///
-    ///     // Use:
-    ///     let counter = cx.watch(&self.state, |s| s.counter).unwrap();
-    /// }
-    /// ```
     pub fn watch<T, F, R>(&mut self, entity: &Entity<T>, f: F) -> Option<R>
     where
         T: Send + Sync + 'static,
@@ -149,26 +146,64 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         entity.read(f).ok()
     }
 
-    /// Spawn a task using the application context.
+    /// Spawn an async task with access to the entity's WeakEntity.
+    /// This is the GPUI-style spawn that automatically provides a weak reference
+    /// to the entity for safe async access.
+    ///
+    /// # Example
+    /// ```ignore
+    /// fn save_data(&mut self, cx: &mut Context<Self>) {
+    ///     let data = self.data.clone();
+    ///     cx.spawn(|weak_self, app| async move {
+    ///         tokio::time::sleep(Duration::from_secs(1)).await;
+    ///         // Safe: if component was dropped, upgrade() returns None
+    ///         if let Some(entity) = weak_self.upgrade() {
+    ///             entity.update(|this| this.on_save_complete());
+    ///         }
+    ///         app.refresh();
+    ///     });
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    /// Panics if the context was not created with a handle (i.e., was cast from another context).
     pub fn spawn<F, Fut>(&self, f: F)
     where
-        F: FnOnce(AppContext) -> Fut + Send + 'static,
+        V: 'static,
+        F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        self.app.spawn(f);
+        let weak = self.handle.clone()
+            .expect("Context::spawn requires a bound entity. Use AppContext::spawn for unbound contexts.");
+        let app = AppContext::clone(&self.app);
+        tokio::spawn(async move {
+            f(weak, app).await;
+        });
     }
 
     /// Spawn a task and return a handle that can be used to cancel it.
     /// Use this with `TaskTracker` for proper lifecycle management.
+    ///
+    /// # Panics
+    /// Panics if the context was not created with a handle.
     pub fn spawn_task<F, Fut>(&self, f: F) -> crate::task::TaskHandle
     where
-        F: FnOnce(AppContext) -> Fut + Send + 'static,
+        V: 'static,
+        F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        self.app.spawn_task(f)
+        let weak = self.handle.clone()
+            .expect("Context::spawn_task requires a bound entity. Use AppContext::spawn_task for unbound contexts.");
+        let app = AppContext::clone(&self.app);
+        let join_handle = tokio::spawn(async move {
+            f(weak, app).await;
+        });
+        crate::task::TaskHandle::new(join_handle.abort_handle())
     }
 
     /// Cast this context to another view type.
+    /// Note: The cast context will NOT have a handle. Use `entity.update_with_cx(cx, ...)`
+    /// pattern for proper child component lifecycle.
     pub fn cast<U: ?Sized + Send + Sync + 'static>(&self) -> Context<U> {
         Context {
             app: AppContext::clone(&self.app),
@@ -177,19 +212,20 @@ impl<V: ?Sized + Send + Sync> Context<V> {
     }
 
     /// Get the entity ID of the component this context is bound to.
-    /// Returns None if the context was not created with a handle.
+    /// Returns None if the context was cast from another type.
     pub fn entity_id(&self) -> Option<EntityId> {
         self.handle.as_ref().map(|h| h.entity_id())
     }
 
     /// Get a weak handle to the component this context is bound to.
-    /// Returns None if the context was not created with a handle.
+    /// Returns None if the context was cast from another type.
+    /// Use this for async operations to safely check if the entity still exists.
     pub fn weak_entity(&self) -> Option<WeakEntity<V>> {
         self.handle.clone()
     }
 
     /// Get a strong handle to the component this context is bound to.
-    /// Returns None if the context was not created with a handle or if the entity was dropped.
+    /// Returns None if the context was cast or if the entity was dropped.
     pub fn entity(&self) -> Option<Entity<V>> {
         self.handle.as_ref().and_then(|h| h.upgrade())
     }
@@ -257,7 +293,7 @@ impl Application {
         // Lifecycle: Call on_mount (first time) and on_enter (entering view) on the root component
         {
             let weak = root.downgrade();
-            let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+            let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), weak);
             root.update(|comp| {
                 comp.on_mount_any(&mut cx);
                 comp.on_enter_any(&mut cx);
@@ -330,7 +366,7 @@ impl Application {
 
                     if let Some(event) = internal_event {
                         let weak = root.downgrade();
-                        let mut cx = EventContext::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+                        let mut cx = EventContext::<dyn AnyComponent>::new(AppContext::clone(&app), weak);
 
                         let action = root.update(|comp| {
                             comp.handle_event_any(event, &mut cx)
@@ -342,7 +378,7 @@ impl Application {
                             match action {
                                 Action::Quit => {
                                     let weak = root.downgrade();
-                                    let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+                                    let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), weak);
                                     root.update(|comp| comp.on_shutdown_any(&mut cx))
                                         .map_err(|_| anyhow::anyhow!("Root mutex poisoned during shutdown"))?;
                                     return Ok(());
@@ -360,7 +396,7 @@ impl Application {
                     let weak = root.downgrade();
                     terminal.draw(|frame| {
                         app.frame_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let mut cx = Context::<dyn AnyComponent>::with_handle(AppContext::clone(&app), weak);
+                        let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), weak);
                         root.update(|comp| comp.render_any(frame, &mut cx))
                             .expect("Root mutex poisoned during render");
                     })?;
