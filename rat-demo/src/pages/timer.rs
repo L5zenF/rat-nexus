@@ -17,25 +17,17 @@ pub struct TimerState {
     pub laps: Vec<u64>,
 }
 
+#[derive(Default)]
 pub struct TimerPage {
-    state: Option<Entity<TimerState>>,
+    state: Entity<TimerState>,
     tasks: TaskTracker,
-}
-
-impl Default for TimerPage {
-    fn default() -> Self {
-        Self {
-            state: None,
-            tasks: TaskTracker::new(),
-        }
-    }
 }
 
 impl Component for TimerPage {
     fn on_mount(&mut self, cx: &mut Context<Self>) {
         // Initialize state entity
         let state = cx.new_entity(TimerState::default());
-        self.state = Some(Entity::clone(&state));
+        self.state = Entity::clone(&state);
 
         let handle = cx.spawn_detached_task(move |app| async move {
             loop {
@@ -55,9 +47,8 @@ impl Component for TimerPage {
     }
 
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        if let Some(state) = &self.state {
-            cx.subscribe(state);
-            let state_data = state.read(|s| s.clone()).unwrap_or_default();
+        cx.subscribe(&self.state);
+        let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let area = frame.area();
 
         let layout = Layout::default()
@@ -112,21 +103,19 @@ impl Component for TimerPage {
             .style(Style::default().bg(color).fg(Color::Black))
             .alignment(Alignment::Center);
         frame.render_widget(footer, layout[2]);
-        }
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
-        if let Some(state) = &self.state {
         match event {
             Event::Key(key) => match key.code {
                 KeyCode::Char('q') => Some(Action::Quit),
                 KeyCode::Char('m') | KeyCode::Esc => Some(Action::Navigate("menu".to_string())),
                 KeyCode::Char(' ') => {
-                    let _ = state.update(|s| s.running = !s.running);
+                    let _ = self.state.update(|s| s.running = !s.running);
                     None
                 }
                 KeyCode::Char('l') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.running || s.elapsed_ms > 0 {
                             s.laps.push(s.elapsed_ms);
                         }
@@ -134,7 +123,7 @@ impl Component for TimerPage {
                     None
                 }
                 KeyCode::Char('r') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         s.elapsed_ms = 0;
                         s.running = false;
                         s.laps.clear();
@@ -144,9 +133,6 @@ impl Component for TimerPage {
                 _ => None,
             },
             _ => None,
-        }
-        } else {
-            None
         }
     }
 }

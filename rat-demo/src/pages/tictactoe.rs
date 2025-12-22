@@ -449,18 +449,10 @@ impl GomokuState {
     }
 }
 
+#[derive(Default)]
 pub struct TicTacToePage {
-    state: Option<Entity<GomokuState>>,
+    state: Entity<GomokuState>,
     board_area: Rect,  // Store separately to avoid update in render
-}
-
-impl Default for TicTacToePage {
-    fn default() -> Self {
-        Self {
-            state: None,
-            board_area: Rect::default(),
-        }
-    }
 }
 
 impl TicTacToePage {
@@ -653,13 +645,12 @@ impl Component for TicTacToePage {
     fn on_mount(&mut self, cx: &mut Context<Self>) {
         // Initialize state entity
         let state = cx.new_entity(GomokuState::default());
-        self.state = Some(state);
+        self.state = state;
     }
 
     fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        if let Some(state) = &self.state {
-            cx.subscribe(state);
-            let state_data = state.read(|s| s.clone()).unwrap_or_default();
+        cx.subscribe(&self.state);
+        let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let area = frame.area();
 
         let main_layout = Layout::default()
@@ -708,45 +699,43 @@ impl Component for TicTacToePage {
             .style(Style::default().bg(Color::Cyan).fg(Color::Black))
             .alignment(Alignment::Center);
         frame.render_widget(footer, main_layout[2]);
-        }
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
-        if let Some(state) = &self.state {
         match event {
             Event::Key(key) => match key.code {
                 KeyCode::Char('q') => Some(Action::Quit),
                 KeyCode::Char('m') | KeyCode::Esc => Some(Action::Navigate("menu".to_string())),
                 KeyCode::Char('r') => {
-                    let _ = state.update(|s| s.reset());
+                    let _ = self.state.update(|s| s.reset());
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.cursor.0 > 0 { s.cursor.0 -= 1; }
                     });
                     None
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.cursor.0 < BOARD_SIZE - 1 { s.cursor.0 += 1; }
                     });
                     None
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.cursor.1 > 0 { s.cursor.1 -= 1; }
                     });
                     None
                 }
                 KeyCode::Right | KeyCode::Char('l') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.cursor.1 < BOARD_SIZE - 1 { s.cursor.1 += 1; }
                     });
                     None
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => {
-                    let _ = state.update(|s| {
+                    let _ = self.state.update(|s| {
                         if s.make_human_move() {
                             s.make_ai_move();
                         }
@@ -759,7 +748,7 @@ impl Component for TicTacToePage {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         let board_area = self.board_area;
-                        let _ = state.update(|s| {
+                        let _ = self.state.update(|s| {
                             if let Some((row, col)) = GomokuState::screen_to_cell(mouse.column, mouse.row, board_area) {
                                 s.cursor = (row, col);
                                 if s.make_move_at(row, col) {
@@ -770,12 +759,12 @@ impl Component for TicTacToePage {
                         None
                     }
                     MouseEventKind::Down(MouseButton::Right) => {
-                        let _ = state.update(|s| s.reset());
+                        let _ = self.state.update(|s| s.reset());
                         None
                     }
                     MouseEventKind::Moved => {
                         let board_area = self.board_area;
-                        let _ = state.update(|s| {
+                        let _ = self.state.update(|s| {
                             if s.status == GameStatus::Playing {
                                 if let Some((row, col)) = GomokuState::screen_to_cell(mouse.column, mouse.row, board_area) {
                                     s.cursor = (row, col);
@@ -788,9 +777,6 @@ impl Component for TicTacToePage {
                 }
             }
             _ => None,
-        }
-        } else {
-            None
         }
     }
 }

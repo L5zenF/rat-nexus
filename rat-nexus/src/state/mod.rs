@@ -188,6 +188,14 @@ impl<T: Send + Sync> Entity<T> {
     }
 }
 
+impl<T: Send + Sync + Default> Default for Entity<T> {
+    /// Create a default entity with the default value of T.
+    /// Useful for component initialization - replace with real entity in on_mount().
+    fn default() -> Self {
+        Entity::new(T::default())
+    }
+}
+
 impl<T: ?Sized + Send + Sync> Entity<T> {
     /// Create an entity from an existing Arc<RwLock<T>>.
     /// This is useful for creating Entity<dyn Trait> from coerced Arc types.
