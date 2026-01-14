@@ -245,7 +245,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
     where T: Send + Sync + 'static
     {
         let mut rx = entity.subscribe();
-        let tx = self.app.re_render_tx.clone();
+        let tx = mpsc::UnboundedSender::clone(&self.app.re_render_tx);
         let handle = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
                 let _ = tx.send(());
@@ -293,7 +293,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        let weak = self.handle.clone()
+        let weak = self.handle.as_ref().map(WeakEntity::clone)
             .expect("Context::spawn requires a bound entity. Use AppContext::spawn for unbound contexts.");
         let app = AppContext::clone(&self.app);
         tokio::spawn(async move {
@@ -312,7 +312,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         F: FnOnce(WeakEntity<V>, AppContext) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
-        let weak = self.handle.clone()
+        let weak = self.handle.as_ref().map(WeakEntity::clone)
             .expect("Context::spawn_task requires a bound entity. Use AppContext::spawn_task for unbound contexts.");
         let app = AppContext::clone(&self.app);
         let join_handle = tokio::spawn(async move {
@@ -363,7 +363,7 @@ impl<V: ?Sized + Send + Sync> Context<V> {
     /// Returns None if the context was cast from another type.
     /// Use this for async operations to safely check if the entity still exists.
     pub fn weak_entity(&self) -> Option<WeakEntity<V>> {
-        self.handle.clone()
+        self.handle.as_ref().map(WeakEntity::clone)
     }
 
     /// Get a strong handle to the component this context is bound to.

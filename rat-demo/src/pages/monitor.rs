@@ -34,7 +34,7 @@ impl Component for MonitorPage {
         let app_state = cx.get_or_insert_with::<Entity<AppState>, _>(|| {
             cx.new_entity(AppState::default())
         }).expect("Failed to initialize AppState");
-        self.app_state = app_state.clone();
+        self.app_state = Entity::clone(&app_state);
 
         // Initialize MonitorState
         let state = cx.new_entity(MonitorState::default());

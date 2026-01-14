@@ -659,7 +659,7 @@ impl Component for TicTacToePage {
 
     fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
-        let board_lock = self.board_area.clone();
+        let board_lock = Arc::clone(&self.board_area);
 
         canvas(move |frame, area| {
             let main_layout = Layout::default()
