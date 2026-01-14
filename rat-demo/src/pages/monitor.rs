@@ -34,19 +34,24 @@ impl Component for MonitorPage {
         let app_state = cx.get_or_insert_with::<Entity<AppState>, _>(|| {
             cx.new_entity(AppState::default())
         }).expect("Failed to initialize AppState");
-        self.app_state = app_state;
+        self.app_state = app_state.clone();
 
         // Initialize MonitorState
         let state = cx.new_entity(MonitorState::default());
         self.state = Entity::clone(&state);
 
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&app_state));
+        self.tasks.track(cx.observe(&self.state));
+
         // Spawn data simulation task
-        let handle = cx.spawn_detached_task(move |app| async move {
+        let handle = cx.spawn_detached_task(move |_app| async move {
             use rand::Rng;
             use rand::SeedableRng;
             let mut rng = rand::rngs::StdRng::from_entropy();
 
             loop {
+                // ... (rest of loop logic omitted as it's not changing, but we should keep it if we replace the block)
                 let _ = state.update(|s| {
                     // Simulate CPU usage
                     s.cpu_history.remove(0);
@@ -85,7 +90,12 @@ impl Component for MonitorPage {
                     s.uptime_secs += 1;
                 });
 
-                app.refresh();
+                // app.refresh(); // <-- REMOVE THIS, observe handles it!
+                // Actually keep it or remove it?
+                // Observer triggers refresh on change.
+                // update() triggers change.
+                // So app.refresh() is redundant if observe is working.
+                
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
         });
@@ -96,9 +106,7 @@ impl Component for MonitorPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
-        cx.subscribe(&self.state);
-        cx.subscribe(&self.app_state);
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
 
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let app = self.app_state.read(|s| s.clone()).unwrap_or_default();

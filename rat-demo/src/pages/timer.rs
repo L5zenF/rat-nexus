@@ -29,12 +29,15 @@ impl Component for TimerPage {
         let state = cx.new_entity(TimerState::default());
         self.state = Entity::clone(&state);
 
-        let handle = cx.spawn_detached_task(move |app| async move {
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&self.state));
+
+        let handle = cx.spawn_detached_task(move |_app| async move {
             loop {
                 let running = state.read(|s| s.running).unwrap_or(false);
                 if running {
                     let _ = state.update(|s| s.elapsed_ms += 10);
-                    app.refresh();
+                    // app.refresh(); // redundant with observer
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
@@ -46,8 +49,7 @@ impl Component for TimerPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
-        cx.subscribe(&self.state);
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
 
         canvas(move |frame, area| {

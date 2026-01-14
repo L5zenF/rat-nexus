@@ -40,8 +40,11 @@ impl Component for ParticlesPage {
         let state = cx.new_entity(ParticlesState { spawn_x: 50.0, spawn_y: 25.0, ..Default::default() });
         self.state = Entity::clone(&state);
 
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&self.state));
+
         // Particle physics update loop
-        let handle = cx.spawn_detached_task(move |app| async move {
+        let handle = cx.spawn_detached_task(move |_app| async move {
             use rand::Rng;
             use rand::SeedableRng;
             let mut rng = rand::rngs::StdRng::from_entropy();
@@ -82,7 +85,7 @@ impl Component for ParticlesPage {
                         // Remove dead particles
                         s.particles.retain(|p| p.life > 0);
                     });
-                    app.refresh();
+                    // app.refresh(); // redundant with observe
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(33)).await;
             }
@@ -94,8 +97,7 @@ impl Component for ParticlesPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
-        cx.subscribe(&self.state);
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
 
         canvas(move |frame, area| {

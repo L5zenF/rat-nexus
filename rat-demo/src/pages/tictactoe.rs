@@ -454,6 +454,7 @@ impl GomokuState {
 pub struct TicTacToePage {
     state: Entity<GomokuState>,
     board_area: Arc<Mutex<Rect>>,  // Store layout for mouse detection
+    tasks: TaskTracker,
 }
 
 impl TicTacToePage {
@@ -647,10 +648,16 @@ impl Component for TicTacToePage {
         // Initialize state entity
         let state = cx.new_entity(GomokuState::default());
         self.state = state;
+
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&self.state));
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
-        cx.subscribe(&self.state);
+    fn on_exit(&mut self, _cx: &mut Context<Self>) {
+        self.tasks.abort_all();
+    }
+
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let board_lock = self.board_area.clone();
 

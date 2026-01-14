@@ -244,7 +244,10 @@ impl Component for FlappyPage {
         let state = cx.new_entity(FlappyState::default());
         self.state = Entity::clone(&state);
 
-        let handle = cx.spawn_detached_task(move |app| async move {
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&self.state));
+
+        let handle = cx.spawn_detached_task(move |_app| async move {
             use rand::Rng;
             use rand::SeedableRng;
             let mut rng = rand::rngs::StdRng::from_entropy();
@@ -282,7 +285,7 @@ impl Component for FlappyPage {
 
                         s.pipes.retain(|p| p.x > -PIPE_WIDTH);
                     });
-                    app.refresh();
+                    // app.refresh(); // redundant with observe
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(33)).await;
             }
@@ -294,8 +297,7 @@ impl Component for FlappyPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
-        cx.subscribe(&self.state);
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
 
         canvas(move |frame, area| {

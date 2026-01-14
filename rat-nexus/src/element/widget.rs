@@ -1,6 +1,6 @@
 use ratatui::prelude::*;
 use ratatui::widgets::Widget;
-use crate::element::{Element, IntoElement};
+use crate::element::Element;
 
 #[derive(Clone)]
 pub struct WidgetElement<W> {

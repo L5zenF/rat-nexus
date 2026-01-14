@@ -42,7 +42,7 @@ impl Default for Div {
 impl Div {
     // --- Layout ---
 
-    pub fn flex(mut self) -> Self {
+    pub fn flex(self) -> Self {
         self
     }
 

@@ -238,28 +238,32 @@ impl<V: ?Sized + Send + Sync> Context<V> {
         &self.app
     }
 
-    /// Subscribe to an entity's changes.
-    pub fn subscribe<T>(&mut self, entity: &Entity<T>)
+    /// Observe an entity's changes.
+    /// Returns a TaskHandle that must be held or tracked to keep the observation active.
+    /// Dropping the handle cancels the observation.
+    pub fn observe<T>(&mut self, entity: &Entity<T>) -> crate::task::TaskHandle
     where T: Send + Sync + 'static
     {
         let mut rx = entity.subscribe();
         let tx = self.app.re_render_tx.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             while rx.changed().await.is_ok() {
                 let _ = tx.send(());
             }
         });
+        crate::task::TaskHandle::new(handle.abort_handle())
     }
 
-    /// Watch an entity: subscribe to changes and read the current value.
-    /// This is a convenience method that combines `subscribe` and `entity.read`.
-    pub fn watch<T, F, R>(&mut self, entity: &Entity<T>, f: F) -> Option<R>
+    /// Watch an entity: observe changes and read the current value.
+    /// This is a convenience method that combines `observe` and `entity.read`.
+    /// Returns (Value, TaskHandle).
+    pub fn watch<T, F, R>(&mut self, entity: &Entity<T>, f: F) -> (Option<R>, crate::task::TaskHandle)
     where
         T: Send + Sync + 'static,
         F: FnOnce(&T) -> R,
     {
-        self.subscribe(entity);
-        entity.read(f).ok()
+        let handle = self.observe(entity);
+        (entity.read(f).ok(), handle)
     }
 
     /// Spawn an async task with access to the entity's WeakEntity.

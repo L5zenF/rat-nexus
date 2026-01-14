@@ -6,6 +6,7 @@ pub struct Menu {
     selected: usize,
     options: Vec<(&'static str, &'static str, Route)>,  // Will be set in on_mount
     state: Entity<AppState>,
+    tasks: TaskTracker,
 }
 
 impl Default for Menu {
@@ -14,6 +15,7 @@ impl Default for Menu {
             selected: 0,
             options: Vec::new(),
             state: Entity::default(),
+            tasks: TaskTracker::new(),
         }
     }
 }
@@ -35,6 +37,9 @@ impl Component for Menu {
             cx.new_entity(AppState::default())
         }).expect("Failed to initialize AppState");
         self.state = state;
+
+        // Observe for re-renders
+        self.tasks.track(cx.observe(&self.state));
     }
 
     fn on_enter(&mut self, _cx: &mut Context<Self>) {
@@ -42,20 +47,19 @@ impl Component for Menu {
     }
 
     fn on_exit(&mut self, _cx: &mut Context<Self>) {
-        // Leaving menu
+        self.tasks.abort_all();
     }
 
     fn on_shutdown(&mut self, _cx: &mut Context<Self>) {
         // Cleanup
     }
 
-    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         use ratatui::layout::{Alignment};
         use ratatui::widgets::{Block, Borders, List, ListItem, BorderType, Paragraph};
         use ratatui::style::{Style, Modifier, Color};
         use ratatui::text::{Line, Span};
 
-        cx.subscribe(&self.state);
         let app_state = self.state.read(|s| s.clone()).unwrap_or_default();
         let theme_color = app_state.theme.color();
 
