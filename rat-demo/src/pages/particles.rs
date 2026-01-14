@@ -3,8 +3,7 @@
 
 use rat_nexus::prelude::*;
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Alignment},
-    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas as RatatuiCanvas, Points}},
+    widgets::{Block, Borders, BorderType, canvas::{Canvas as RatatuiCanvas, Points}},
     style::{Style, Color},
 };
 use crossterm::event::KeyCode;
@@ -99,55 +98,65 @@ impl Component for ParticlesPage {
 
     fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
+        let particles_data: Vec<_> = state_data.particles.iter()
+            .map(|p| (p.x, p.y, p.color))
+            .collect();
+        let paused = state_data.paused;
+        let num_particles = state_data.particles.len();
+        let total_spawned = state_data.total_spawned;
 
-        canvas(move |frame, area| {
-            let layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
-                .split(area);
+        // Header
+        let status = if paused { "PAUSED" } else { "RUNNING" };
+        let header = div()
+            .h(3)
+            .border_all()
+            .border_type(BorderType::Rounded)
+            .fg(Color::Cyan)
+            .child(text(format!(
+                " Particles: {}  │  Spawned: {}  │  {} ",
+                num_particles, total_spawned, status
+            )).align_center());
 
-            // Header
-            let status = if state_data.paused { "PAUSED" } else { "RUNNING" };
-            let header = Paragraph::new(format!(
-                " Particles: {}  |  Spawned: {}  |  {} ",
-                state_data.particles.len(), state_data.total_spawned, status
-            ))
-            .style(Style::default().fg(Color::Cyan))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
-            frame.render_widget(header, layout[0]);
-
-            // Canvas
-            let canvas_area = layout[1];
-            let particles_data: Vec<_> = state_data.particles.iter()
-                .map(|p| (p.x, p.y, p.color))
-                .collect();
-
-            let canvas_widget = RatatuiCanvas::default()
-                .block(Block::default()
-                    .title(" Particle Fountain ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Magenta)))
-                .x_bounds([0.0, 100.0])
-                .y_bounds([0.0, 50.0])
-                .paint(move |ctx| {
-                    for (x, y, color) in &particles_data {
-                        ctx.draw(&Points {
-                            coords: &[(*x, *y)],
-                            color: *color,
+        // Canvas
+        let canvas_view = div()
+            .flex()
+            .child(
+                canvas(move |frame, area| {
+                    let canvas_widget = RatatuiCanvas::default()
+                        .block(Block::default()
+                            .title(" Particle Fountain ")
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(Color::Magenta)))
+                        .x_bounds([0.0, 100.0])
+                        .y_bounds([0.0, 50.0])
+                        .paint(move |ctx| {
+                            for (x, y, color) in &particles_data {
+                                ctx.draw(&Points {
+                                    coords: &[(*x, *y)],
+                                    color: *color,
+                                });
+                            }
                         });
-                    }
-                });
-            frame.render_widget(canvas_widget, canvas_area);
+                    frame.render_widget(canvas_widget, area);
+                })
+            );
 
-            // Footer
-            let color = if state_data.paused { Color::Yellow } else { Color::Magenta };
-            let footer = Paragraph::new(" SPACE Pause | Arrow Keys Move | R Reset | M Menu | Q Quit ")
-                .style(Style::default().bg(color).fg(Color::Black))
-                .alignment(Alignment::Center);
-            frame.render_widget(footer, layout[2]);
-        })
+        // Footer
+        let footer_color = if paused { Color::Yellow } else { Color::Magenta };
+        let footer = div()
+            .h(3)
+            .bg(footer_color)
+            .fg(Color::Black)
+            .child(text(" SPACE Pause │ Arrow Keys Move │ R Reset │ M Menu │ Q Quit ").align_center());
+
+        // Final Layout
+        div()
+            .flex_col()
+            .h_full()
+            .child(header)
+            .child(canvas_view)
+            .child(footer)
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

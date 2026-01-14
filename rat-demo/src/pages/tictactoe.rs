@@ -3,7 +3,7 @@
 
 use rat_nexus::prelude::*;
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Alignment, Rect},
+    layout::Rect,
     widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas as RatatuiCanvas, Line as CanvasLine, Circle}},
     style::{Style, Color, Modifier},
     text::{Line, Span},
@@ -661,56 +661,71 @@ impl Component for TicTacToePage {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let board_lock = Arc::clone(&self.board_area);
 
-        canvas(move |frame, area| {
-            let main_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(0),
-                    Constraint::Length(3),
-                ])
-                .split(area);
+        // Header
+        let header_text = match state_data.status {
+            GameStatus::Playing => "🎮 Gomoku - Human vs AI",
+            GameStatus::HumanWon => "🎉 Victory! Five in a row!",
+            GameStatus::AIWon => "🤖 AI Wins!",
+            GameStatus::Draw => "🤝 It's a Draw!",
+        };
+        let header_color = match state_data.status {
+            GameStatus::Playing => Color::Cyan,
+            GameStatus::HumanWon => Color::Green,
+            GameStatus::AIWon => Color::Red,
+            GameStatus::Draw => Color::Yellow,
+        };
 
-            // Header
-            let header_text = match state_data.status {
-                GameStatus::Playing => "🎮 Gomoku - Human vs AI",
-                GameStatus::HumanWon => "🎉 Victory! Five in a row!",
-                GameStatus::AIWon => "🤖 AI Wins!",
-                GameStatus::Draw => "🤝 It's a Draw!",
-            };
-            let header_color = match state_data.status {
-                GameStatus::Playing => Color::Cyan,
-                GameStatus::HumanWon => Color::Green,
-                GameStatus::AIWon => Color::Red,
-                GameStatus::Draw => Color::Yellow,
-            };
+        let header = div()
+            .h(3)
+            .border_all()
+            .border_type(BorderType::Rounded)
+            .fg(header_color)
+            .child(text(header_text).bold().align_center());
 
-            let header = Paragraph::new(format!(" {} ", header_text))
-                .style(Style::default().fg(header_color).add_modifier(Modifier::BOLD))
-                .alignment(Alignment::Center)
-                .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
-            frame.render_widget(header, main_layout[0]);
+        let state_data_c1 = state_data.clone();
+        let state_data_c2 = state_data.clone();
 
-            // Content
-            let content_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-                .split(main_layout[1]);
+        // Content
+        let content = div()
+            .flex()
+            .flex_row()
+            .child(
+                div()
+                    .w_percent(65)
+                    .child(
+                        canvas(move |frame, area| {
+                            // Store board area for mouse click detection
+                            if let Ok(mut guard) = board_lock.lock() {
+                                *guard = area;
+                            }
+                            Self::render_board(frame, area, &state_data_c1);
+                        })
+                    )
+            )
+            .child(
+                div()
+                    .w_percent(35)
+                    .child(
+                        canvas(move |frame, area| {
+                            Self::render_info_panel(frame, area, &state_data_c2);
+                        })
+                    )
+            );
 
-            // Store board area for mouse click detection
-            if let Ok(mut guard) = board_lock.lock() {
-                *guard = content_layout[0];
-            }
+        // Footer
+        let footer = div()
+            .h(3)
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .child(text(" Click/Enter Place │ ↑↓←→ Move │ R Reset │ M Menu │ Q Quit ").align_center());
 
-            Self::render_board(frame, content_layout[0], &state_data);
-            Self::render_info_panel(frame, content_layout[1], &state_data);
-
-            // Footer
-            let footer = Paragraph::new(" Click/Enter Place | ↑↓←→ Move | R Reset | M Menu | Q Quit ")
-                .style(Style::default().bg(Color::Cyan).fg(Color::Black))
-                .alignment(Alignment::Center);
-            frame.render_widget(footer, main_layout[2]);
-        })
+        // Final Layout
+        div()
+            .flex_col()
+            .h_full()
+            .child(header)
+            .child(content)
+            .child(footer)
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

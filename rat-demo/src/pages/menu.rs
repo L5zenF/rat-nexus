@@ -155,9 +155,11 @@ impl Component for Menu {
                 .border_style(Style::default().fg(theme_color)));
 
         // Footer
-        let footer = Paragraph::new(" ↑/↓ Navigate │ Enter Select │ T Theme │ Q Quit ")
-            .style(Style::default().bg(theme_color).fg(Color::Black))
-            .alignment(Alignment::Center);
+        let footer = div()
+            .h(3)
+            .bg(theme_color)
+            .fg(Color::Black)
+            .child(text(" ↑/↓ Navigate │ Enter Select │ T Theme │ Q Quit ").align_center());
 
         // Compose elements
         div()
@@ -170,7 +172,7 @@ impl Component for Menu {
                     .child(widget(list).w_percent(55))
                     .child(widget(info).w_percent(45))
             )
-            .child(widget(footer).h(3))
+            .child(footer)
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

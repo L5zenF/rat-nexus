@@ -4,8 +4,7 @@
 
 use rat_nexus::prelude::*;
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Alignment},
-    widgets::{Block, Borders, Paragraph, List, ListItem, BorderType, Wrap, ListState},
+    widgets::{Paragraph, List, ListItem, BorderType, Wrap, ListState},
     style::{Style, Color, Modifier},
     text::{Line, Span},
 };
