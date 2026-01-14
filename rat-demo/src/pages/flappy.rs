@@ -3,7 +3,7 @@
 
 use rat_nexus::prelude::*;
 use ratatui::{
-    widgets::{Block, Borders, BorderType, canvas::{Canvas as RatatuiCanvas, Rectangle, Points, Context as CanvasContext}},
+    widgets::{Block, Borders, BorderType, canvas::{Canvas as RatatuiCanvas, Rectangle, Points, Circle, Line as CanvasLine, Context as CanvasContext}},
     style::{Style, Color},
     text::Line,
 };
@@ -29,7 +29,7 @@ pub struct Bird {
 
 impl Bird {
     pub fn new(x: f64, y: f64) -> Self {
-        Self { x, y, vy: 0.0, radius: 1.8, alive: true }
+        Self { x, y, vy: 0.0, radius: 1.2, alive: true }
     }
 
     pub fn update(&mut self) {
@@ -71,69 +71,84 @@ impl Bird {
     pub fn render(&self, ctx: &mut CanvasContext) {
         let x = self.x;
         let y = self.y;
+        let r = self.radius;
 
-        // === Main body - Emoji 🐤 ===
-        let bird_emoji = if self.alive { "🐤" } else { "💀" };
-        ctx.print(x - 0.5, y, Line::styled(bird_emoji, Style::default()));
-
-        // === Wing particles (~24) - flapping animation ===
-        let wing_color = if self.alive { Color::Rgb(255, 200, 50) } else { Color::DarkGray };
-        let wing_y_offset = if self.vy > 0.3 {
-            1.0  // up
-        } else if self.vy < -0.3 {
-            -0.6 // down
-        } else {
-            0.2  // neutral
-        };
-
-        let mut wing_points: Vec<(f64, f64)> = vec![];
-        for i in 0..8 {
-            let t = i as f64 / 7.0;
-            let wx = x - 1.0 - t * 1.2;
-            let wy = y + wing_y_offset * (1.0 - t * 0.3);
-            wing_points.push((wx, wy));
-            wing_points.push((wx + 0.1, wy + 0.1));
-            wing_points.push((wx - 0.1, wy - 0.1));
-        }
-        ctx.draw(&Points { coords: &wing_points, color: wing_color });
-
-        // === Tail particles (~18) ===
-        let tail_color = if self.alive { Color::Rgb(220, 160, 0) } else { Color::DarkGray };
-        let mut tail_points: Vec<(f64, f64)> = vec![];
-        for i in 0..6 {
-            let spread = (i as f64 - 2.5) * 0.12;
-            tail_points.push((x - 1.5, y + spread));
-            tail_points.push((x - 1.7, y + spread * 1.3));
-            tail_points.push((x - 1.9, y + spread * 1.5));
-        }
-        ctx.draw(&Points { coords: &tail_points, color: tail_color });
-
-        // === Sparkle trail (~12) - movement effect ===
-        if self.alive && self.vy.abs() > 0.2 {
-            let sparkle_color = Color::Rgb(255, 255, 150);
-            let mut sparkles: Vec<(f64, f64)> = vec![];
-            for i in 0..4 {
-                let offset = i as f64 * 0.5;
-                sparkles.push((x - 2.0 - offset, y + (i as f64 * 0.1).sin() * 0.3));
-                sparkles.push((x - 2.2 - offset, y - 0.2 + (i as f64 * 0.15).cos() * 0.2));
-                sparkles.push((x - 2.1 - offset, y + 0.1));
-            }
-            ctx.draw(&Points { coords: &sparkles, color: sparkle_color });
+        if !self.alive {
+            // === Dead Bird - Skull emoji + grayed out bits ===
+            ctx.print(x - 0.5, y, Line::styled("💀", Style::default()));
+            ctx.draw(&Circle { x, y, radius: r, color: Color::DarkGray });
+            return;
         }
 
-        // === Speed lines (~10) when moving fast ===
-        if self.vy > 0.5 {
-            // Going up - lines below
-            let up_lines: Vec<(f64, f64)> = (0..10)
-                .map(|i| (x - 0.5 + (i as f64 * 0.2), y - 1.5 - (i as f64 * 0.1)))
-                .collect();
-            ctx.draw(&Points { coords: &up_lines, color: Color::White });
-        } else if self.vy < -0.5 {
-            // Falling - lines above
-            let down_lines: Vec<(f64, f64)> = (0..10)
-                .map(|i| (x - 0.5 + (i as f64 * 0.2), y + 1.5 + (i as f64 * 0.1)))
-                .collect();
-            ctx.draw(&Points { coords: &down_lines, color: Color::Cyan });
+        // === 1. Body (Golden Yellow) ===
+        ctx.draw(&Circle {
+            x, y,
+            radius: r,
+            color: Color::Rgb(255, 204, 0),
+        });
+
+        // === 2. Eye (White with Black Pupil) ===
+        ctx.draw(&Points {
+            coords: &[(x + r * 0.4, y + r * 0.3)],
+            color: Color::White,
+        });
+        ctx.draw(&Points {
+            coords: &[(x + r * 0.5, y + r * 0.35)],
+            color: Color::Black,
+        });
+
+        // === 3. Beak (Sharp Orange) ===
+        // Top Part
+        ctx.draw(&CanvasLine {
+            x1: x + r - 0.1, y1: y + 0.1,
+            x2: x + r + 0.6, y2: y,
+            color: Color::Rgb(255, 102, 0),
+        });
+        // Bottom Part
+        ctx.draw(&CanvasLine {
+            x1: x + r - 0.1, y1: y - 0.1,
+            x2: x + r + 0.5, y2: y - 0.05,
+            color: Color::Rgb(255, 102, 0),
+        });
+
+        // === 4. Wing (Light Yellow, Animating) ===
+        let wing_offset = (self.vy * 0.8).clamp(-r * 0.8, r * 0.8);
+        ctx.draw(&Circle {
+            x: x - r * 0.3,
+            y: y + wing_offset,
+            radius: r * 0.5,
+            color: Color::Rgb(255, 255, 153),
+        });
+        // Wing details
+        ctx.draw(&CanvasLine {
+            x1: x - r * 0.6, y1: y + wing_offset,
+            x2: x - r * 0.1, y2: y + wing_offset,
+            color: Color::Rgb(220, 220, 0),
+        });
+
+        // === 5. Tail (Little tuft) ===
+        ctx.draw(&CanvasLine {
+            x1: x - r, y1: y,
+            x2: x - r - 0.5, y2: y + 0.2,
+            color: Color::Rgb(255, 204, 0),
+        });
+
+        // === Particle Effects (Keep the existing juice) ===
+        // Wing particles (~12)
+        let mut wing_particles = vec![];
+        for i in 0..4 {
+            let t = i as f64 / 3.0;
+            wing_particles.push((x - 1.2 - t, y + wing_offset + t * 0.2));
+        }
+        ctx.draw(&Points { coords: &wing_particles, color: Color::Rgb(255, 240, 100) });
+
+        // Sparkle trail when moving fast
+        if self.vy.abs() > 0.4 {
+            let t = (x + y).sin() * 0.5;
+            ctx.draw(&Points {
+                coords: &[(x - 2.5, y + t), (x - 3.2, y - t)],
+                color: Color::Rgb(255, 255, 255),
+            });
         }
     }
 }
