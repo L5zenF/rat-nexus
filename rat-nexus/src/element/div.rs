@@ -125,6 +125,16 @@ impl Div {
         self
     }
 
+    pub fn border_type(mut self, border_type: BorderType) -> Self {
+        self.border_type = border_type;
+        self
+    }
+
+    pub fn border_style(mut self, style: Style) -> Self {
+        self.border_style = style;
+        self
+    }
+
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self

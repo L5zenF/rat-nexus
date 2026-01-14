@@ -107,56 +107,67 @@ impl Component for MonitorPage {
     }
 
     fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
-
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         let app = self.app_state.read(|s| s.clone()).unwrap_or_default();
         let theme_color = app.theme.color();
 
-        canvas(move |frame, area| {
-            // Main layout: Header, Body, Footer
-            let main_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Header
-                    Constraint::Min(0),    // Body
-                    Constraint::Length(3), // Footer
-                ])
-                .split(area);
+        // Header with system info
+        let uptime_str = format_uptime(state_data.uptime_secs);
+        let header_text = format!(
+            " 📊 System Monitor │ Uptime: {} │ Theme: {} ",
+            uptime_str,
+            app.theme.name()
+        );
 
-            // Header with system info
-            let uptime_str = format_uptime(state_data.uptime_secs);
-            let header_text = format!(
-                " 📊 System Monitor │ Uptime: {} │ Theme: {} ",
-                uptime_str,
-                app.theme.name()
+        let header = div()
+            .h(3)
+            .border_all()
+            .border_type(BorderType::Rounded)
+            .fg(theme_color)
+            .title(" System ")
+            .child(
+                text(header_text)
+                    .fg(theme_color)
+                    .bold()
             );
-            let header = Paragraph::new(header_text)
-                .style(Style::default().fg(theme_color).add_modifier(Modifier::BOLD))
-                .alignment(Alignment::Left)
-                .block(Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(theme_color)));
-            frame.render_widget(header, main_layout[0]);
 
-            // Body layout
-            let body_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-                .split(main_layout[1]);
+        // Footer
+        let footer = div()
+            .h(3)
+            .bg(theme_color)
+            .fg(Color::Black)
+            .child(
+                text(" R Reset │ T Theme │ M Menu │ Q Quit │ Mouse: Scroll to adjust ")
+                    .align_center()
+            );
 
-            // Left side: Charts
-            Self::render_charts(frame, body_layout[0], &state_data, theme_color);
+        // Body: Charts (Left) and Sidebar (Right)
+        let sd1 = state_data.clone();
+        let sd2 = state_data.clone();
+        let body = div()
+            .flex_row()
+            .child(
+                div()
+                    .w_percent(65)
+                    .child(canvas(move |frame, area| {
+                        Self::render_charts(frame, area, &sd1, theme_color);
+                    }))
+            )
+            .child(
+                div()
+                    .w_percent(35)
+                    .child(canvas(move |frame, area| {
+                        Self::render_sidebar(frame, area, &sd2, theme_color);
+                    }))
+            );
 
-            // Right side: Metrics and processes
-            Self::render_sidebar(frame, body_layout[1], &state_data, theme_color);
-
-            // Footer
-            let footer = Paragraph::new(" R Reset │ T Theme │ M Menu │ Q Quit │ Mouse: Scroll to adjust ")
-                .style(Style::default().bg(theme_color).fg(Color::Black))
-                .alignment(Alignment::Center);
-            frame.render_widget(footer, main_layout[2]);
-        })
+        // Main Layout
+        div()
+            .flex_col()
+            .h_full()
+            .child(header)
+            .child(body.flex())
+            .child(footer)
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

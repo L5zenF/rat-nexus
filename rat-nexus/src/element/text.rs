@@ -8,6 +8,8 @@ pub struct Text {
     pub style_fn: Option<Box<dyn Fn(Style) -> Style + Send + Sync>>,
     pub alignment: Alignment,
     pub wrap: bool,
+    pub width_constraint: Constraint,
+    pub height_constraint: Constraint,
 }
 
 pub fn text(content: impl Into<String>) -> Text {
@@ -22,7 +24,29 @@ impl Text {
             style_fn: None,
             alignment: Alignment::Left,
             wrap: false,
+            width_constraint: Constraint::Min(0), // Default to flex
+            height_constraint: Constraint::Length(1),
         }
+    }
+
+    pub fn w_full(mut self) -> Self {
+        self.width_constraint = Constraint::Percentage(100);
+        self
+    }
+
+    pub fn h_full(mut self) -> Self {
+        self.height_constraint = Constraint::Percentage(100);
+        self
+    }
+
+    pub fn w(mut self, length: u16) -> Self {
+        self.width_constraint = Constraint::Length(length);
+        self
+    }
+
+    pub fn h(mut self, length: u16) -> Self {
+        self.height_constraint = Constraint::Length(length);
+        self
     }
 
     pub fn bg(mut self, color: Color) -> Self {
@@ -42,22 +66,24 @@ impl Text {
     
     pub fn align_center(mut self) -> Self {
         self.alignment = Alignment::Center;
+        self.width_constraint = Constraint::Min(0); // Ensure it takes space to align
         self
     }
 
     pub fn align_right(mut self) -> Self {
         self.alignment = Alignment::Right;
+        self.width_constraint = Constraint::Min(0);
         self
     }
 }
 
 impl Element for Text {
     fn width(&self) -> Constraint {
-        Constraint::Length(self.content.len() as u16)
+        self.width_constraint
     }
 
     fn height(&self) -> Constraint {
-        Constraint::Length(1)
+        self.height_constraint
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect) {

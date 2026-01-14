@@ -25,6 +25,26 @@ impl Canvas {
         self.height_constraint = Constraint::Percentage(100);
         self
     }
+
+    pub fn w(mut self, length: u16) -> Self {
+        self.width_constraint = Constraint::Length(length);
+        self
+    }
+
+    pub fn h(mut self, length: u16) -> Self {
+        self.height_constraint = Constraint::Length(length);
+        self
+    }
+
+    pub fn w_percent(mut self, p: u16) -> Self {
+        self.width_constraint = Constraint::Percentage(p);
+        self
+    }
+
+    pub fn h_percent(mut self, p: u16) -> Self {
+        self.height_constraint = Constraint::Percentage(p);
+        self
+    }
 }
 
 impl Element for Canvas {

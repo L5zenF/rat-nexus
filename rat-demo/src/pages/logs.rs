@@ -1,5 +1,6 @@
 //! Log Streamer - Real-time log aggregation and filtering
 //! Showcases: Text Input, List virtualization (simulated), Derived State, Master-Detail view, Dynamic filtering
+//! Now leveraging built-in component library (Div, Text, Canvas)
 
 use rat_nexus::prelude::*;
 use ratatui::{
@@ -91,11 +92,9 @@ impl LogState {
         
         self.logs.push(log);
         if self.logs.len() > 1000 {
-            self.logs.remove(0); // Keep buffer capped
-            // Indices shift invalidation is complex, so simpler to just recalc filter
+            self.logs.remove(0); 
             self.recalc_filter();
         } else {
-            // Optimization: check if new log matches filter, if so add to filtered_indices
             let matches = self.filter.is_empty() || 
                           self.logs.last().unwrap().message.to_lowercase().contains(&self.filter.to_lowercase()) ||
                           self.logs.last().unwrap().service.to_lowercase().contains(&self.filter.to_lowercase());
@@ -124,7 +123,6 @@ impl LogState {
                 .collect();
         }
         
-        // Clamp selection
         if self.selected_index >= self.filtered_indices.len() {
             self.selected_index = self.filtered_indices.len().saturating_sub(1);
         }
@@ -150,10 +148,8 @@ impl Component for LogPage {
         let state = cx.new_entity(LogState::default());
         self.state = Entity::clone(&state);
 
-        // Observe
         self.tasks.track(cx.observe(&state));
 
-        // Generator Task
         let bg_state = state.downgrade();
         let handle = cx.spawn_detached_task(move |_| async move {
              use rand::SeedableRng;
@@ -194,27 +190,14 @@ impl Component for LogPage {
                      };
                      
                      let details = format!("{{\n  \"id\": \"Log-{id_counter}\",\n  \"svc\": \"{}\",\n  \"trace\": \"{:016x}\",\n  \"shard\": {},\n  \"method\": \"{}\",\n  \"latency_ms\": {}\n}}", 
-                        service, 
-                        rng.gen::<u64>(), 
-                        rng.gen_range(0..16),
-                        methods[rng.gen_range(0..methods.len())],
-                        rng.gen_range(5..500)
+                        service, rng.gen::<u64>(), rng.gen_range(0..16), methods[rng.gen_range(0..methods.len())], rng.gen_range(5..500)
                      );
                      
-                     let log = LogEntry {
-                         id: id_counter,
-                         timestamp: elapsed,
-                         level,
-                         service,
-                         message: msg,
-                         details,
-                     };
-
+                     let log = LogEntry { id: id_counter, timestamp: elapsed, level, service, message: msg, details };
                      if let Some(s) = bg_state.upgrade() {
                          let _ = s.update(|st| st.add_log(log));
                      }
                  }
-
                  let delay = if should_add { rng.gen_range(200..1500) } else { 500 };
                  tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
              }
@@ -229,152 +212,123 @@ impl Component for LogPage {
     fn render(&mut self, _cx: &mut Context<Self>) -> impl IntoElement + 'static {
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
         
-        canvas(move |frame, area| {
-             let main_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),  // Header/Filter
-                    Constraint::Min(0),     // Content
-                    Constraint::Length(3),  // Footer
-                ])
-                .split(area);
+        // --- 1. Header (Div + Canvas for input simulation with cursor) ---
+        let state_data_c1 = state_data.clone();
+        let header = div()
+            .h(3)
+            .border_all()
+            .border_type(BorderType::Rounded)
+            .title(" Log Filter ")
+            .fg(if state_data.is_typing { Color::Yellow } else { Color::DarkGray })
+            .px(1)
+            .child(
+                canvas(move |frame, area| {
+                    let text = if state_data_c1.filter.is_empty() { 
+                        if state_data_c1.is_typing { "" } else { "Type '/' to search..." } 
+                    } else { 
+                        &state_data_c1.filter 
+                    };
+                    let style = if state_data_c1.is_typing { 
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) 
+                    } else { 
+                        Style::default().fg(Color::Cyan) 
+                    };
+                    frame.render_widget(Paragraph::new(format!(" 🔍 {}", text)).style(style), area);
+                    if state_data_c1.is_typing {
+                        frame.set_cursor_position((area.x + 3 + state_data_c1.filter.len() as u16, area.y));
+                    }
+                })
+            );
 
-            // === 1. Header / Filter ===
-            let filter_style = if state_data.is_typing { 
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) 
-            } else { 
-                Style::default().fg(Color::Cyan) 
-            };
-            
-            let filter_border_style = if state_data.is_typing {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
+        // --- 2. Content Row (Div FlexBox) ---
+        let state_data_c2 = state_data.clone();
+        let list_view = div()
+            .w_percent(60)
+            .border_all()
+            .title(" Live Logs ")
+            .child(
+                canvas(move |frame, area| {
+                    let items: Vec<ListItem> = state_data_c2.filtered_indices.iter().map(|&idx| {
+                        if let Some(log) = state_data_c2.logs.get(idx) {
+                            let time_str = format!("{:>6.2}s", log.timestamp);
+                            Line::from(vec![
+                                Span::styled(format!(" {} ", time_str), Style::default().fg(Color::DarkGray)),
+                                Span::styled(format!(" {} ", log.level.as_str()), Style::default().fg(log.level.color()).add_modifier(Modifier::BOLD)),
+                                Span::styled(format!(" {:<12} ", log.service), Style::default().fg(Color::Blue)),
+                                Span::raw(log.message.clone()),
+                            ]).into()
+                        } else { ListItem::new("error") }
+                    }).collect();
 
-            let filter_text = if state_data.filter.is_empty() { 
-                if state_data.is_typing { "" } else { "Type '/' to search..." } 
-            } else { 
-                &state_data.filter 
-            };
-            
-            let header = Paragraph::new(format!(" 🔍 {}", filter_text))
-                .block(Block::default()
-                    .title(" Log Filter ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(filter_border_style))
-                .style(filter_style);
-            
-            frame.render_widget(header, main_layout[0]);
-            
-            // Draw Cursor if typing
-            if state_data.is_typing {
-                let cursor_x = main_layout[0].x + 4 + state_data.filter.len() as u16;
-                let cursor_y = main_layout[0].y + 1;
-                // Simple cursor simulation
-                frame.set_cursor_position((cursor_x, cursor_y)); 
-            }
+                    let mut list_state = ListState::default();
+                    if !state_data_c2.filtered_indices.is_empty() {
+                        list_state.select(Some(state_data_c2.selected_index));
+                    }
+                    let list = List::new(items)
+                        .highlight_style(Style::default().bg(Color::Rgb(40, 40, 40)).add_modifier(Modifier::BOLD))
+                        .highlight_symbol(">> ");
+                    frame.render_stateful_widget(list, area, &mut list_state);
+                })
+            );
 
-            // === 2. Content (Split List and Detail) ===
-            let content_layout = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(60), // List
-                    Constraint::Percentage(40), // Detail
-                ])
-                .split(main_layout[1]);
+        let selected_log = state_data.filtered_indices.get(state_data.selected_index)
+            .and_then(|&idx| state_data.logs.get(idx)).cloned();
 
-            // LIST
-            let items: Vec<ListItem> = state_data.filtered_indices.iter().map(|&idx| {
-                if let Some(log) = state_data.logs.get(idx) {
-                    let time_str = format!("{:>6.2}s", log.timestamp);
-                    let level_style = Style::default().fg(log.level.color());
-                    
-                    Line::from(vec![
-                        Span::styled(format!(" {} ", time_str), Style::default().fg(Color::DarkGray)),
-                        Span::styled(format!(" {} ", log.level.as_str()), level_style.add_modifier(Modifier::BOLD)),
-                        Span::styled(format!(" {:<12} ", log.service), Style::default().fg(Color::Blue)),
-                        Span::raw(&log.message),
-                    ]).into()
-                } else {
-                    ListItem::new("Invalid Log Index")
-                }
-            }).collect();
-
-            let logs_block = Block::default()
-                .title(" Live Logs ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if state_data.is_typing { Color::DarkGray } else { Color::White }));
-
-            let mut list_state = ListState::default();
-            
-            // Adjust scroll to keep selection visible
-            if !state_data.filtered_indices.is_empty() {
-                list_state.select(Some(state_data.selected_index));
-            }
-
-            let list = List::new(items)
-                .block(logs_block)
-                .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
-                .highlight_symbol(">> ");
-                
-            frame.render_stateful_widget(list, content_layout[0], &mut list_state);
-
-
-            // DETAIL
-            let selected_log = state_data.filtered_indices.get(state_data.selected_index)
-                .and_then(|&idx| state_data.logs.get(idx));
-                
-            let detail_text = if let Some(log) = selected_log {
-                vec![
-                    Line::from(vec![Span::styled("Log ID: ", Style::default().fg(Color::Cyan)), Span::raw(format!("{}", log.id))]),
-                    Line::from(vec![Span::styled("Service: ", Style::default().fg(Color::Cyan)), Span::raw(&log.service)]),
-                    Line::from(vec![Span::styled("Time:    ", Style::default().fg(Color::Cyan)), Span::raw(format!("{:.3}s", log.timestamp))]),
-                    Line::from(vec![Span::styled("Level:   ", Style::default().fg(Color::Cyan)), Span::styled(log.level.as_str(), Style::default().fg(log.level.color()))]),
-                    Line::from(""),
-                    Line::from(Span::styled("Payload:", Style::default().fg(Color::Yellow))),
-                    Line::from(log.details.clone()),
-                ]
-            } else {
-                vec![Line::from("No log selected...")]
-            };
-
-            let detail = Paragraph::new(detail_text)
-                .wrap(Wrap { trim: false })
-                .block(Block::default()
-                    .title(" Log Details ")
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Thick));
-            
-            frame.render_widget(detail, content_layout[1]);
-
-
-            // === 3. Footer ===
-            let (n_info, n_warn, n_err) = state_data.stats;
-            let status_space = if state_data.paused { "PAUSED (Space to Resume)" } else { "STREAMING (Space to Pause)" };
-            let auto_scroll_status = if state_data.auto_scroll { "Auto-Scroll: ON (A)" } else { "Auto-Scroll: OFF (A)" };
-            
-            let footer_content = vec![
-                Span::styled(format!(" Total: {} ", state_data.logs.len()), Style::default().fg(Color::White)),
-                Span::raw(" | "),
-                Span::styled(format!(" Info: {} ", n_info), Style::default().fg(Color::Green)),
-                Span::styled(format!(" Warn: {} ", n_warn), Style::default().fg(Color::Yellow)),
-                Span::styled(format!(" Err: {} ", n_err), Style::default().fg(Color::Red)),
-                Span::raw(" │ "),
-                Span::styled(status_space, Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" │ "),
-                Span::styled(auto_scroll_status, Style::default()),
-                Span::raw(" │ M: Menu Q: Quit"),
+        let detail_element = if let Some(log) = selected_log {
+            let detail_text = vec![
+                Line::from(vec![Span::styled("Log ID:    ", Style::default().fg(Color::Cyan)), Span::raw(format!("{}", log.id))]),
+                Line::from(vec![Span::styled("Service:   ", Style::default().fg(Color::Cyan)), Span::raw(log.service.clone())]),
+                Line::from(vec![Span::styled("Time:      ", Style::default().fg(Color::Cyan)), Span::raw(format!("{:.3}s", log.timestamp))]),
+                Line::from(vec![Span::styled("Level:     ", Style::default().fg(Color::Cyan)), Span::styled(log.level.as_str(), Style::default().fg(log.level.color()))]),
+                Line::from(""),
+                Line::from(Span::styled("Payload:", Style::default().fg(Color::Yellow))),
+                Line::from(log.details.clone()),
             ];
+            widget(Paragraph::new(detail_text).wrap(Wrap { trim: false }))
+        } else {
+            widget(Paragraph::new("No selection"))
+        };
 
-            let footer = Paragraph::new(Line::from(footer_content))
-                .alignment(Alignment::Center)
-                .style(Style::default().bg(Color::DarkGray))
-                .block(Block::default().borders(Borders::TOP));
-            
-            frame.render_widget(footer, main_layout[2]);
-        })
+        let content = div()
+            .flex_row()
+            .child(list_view)
+            .child(
+                // Detail View
+                div()
+                    .w_percent(40)
+                    .border_all()
+                    .title(" Log Details ")
+                    .p(1)
+                    .child(detail_element)
+            );
+
+        // --- 3. Footer (Rich Div FlexRow with text bits) ---
+        let (n_info, n_warn, n_err) = state_data.stats;
+        let status_desc = if state_data.paused { "PAUSED" } else { "STREAMING" };
+        let auto_scroll_desc = if state_data.auto_scroll { "Auto-Scroll: ON" } else { "Auto-Scroll: OFF" };
+
+        let footer = div()
+            .h(1)
+            .flex_row()
+            .bg(Color::Rgb(40, 40, 40))
+            .child(text(format!(" Total: {} ", state_data.logs.len())).fg(Color::White))
+            .child(text(" | "))
+            .child(text(format!(" Info: {} ", n_info)).fg(Color::Green))
+            .child(text(format!(" Warn: {} ", n_warn)).fg(Color::Yellow))
+            .child(text(format!(" Error: {} ", n_err)).fg(Color::Red))
+            .child(div().flex()) // Spacer
+            .child(text(format!(" {} ", status_desc)).bold().fg(if state_data.paused { Color::Yellow } else { Color::Green }))
+            .child(text(" | "))
+            .child(text(format!(" {} ", auto_scroll_desc)).fg(Color::Cyan))
+            .child(text(" | M: Menu Q: Quit ").fg(Color::DarkGray));
+
+        // --- Final Layout Assembly ---
+        div()
+            .flex_col()
+            .h_full()
+            .child(header)
+            .child(content.flex()) // Content takes remaining space
+            .child(footer)
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
@@ -383,48 +337,24 @@ impl Component for LogPage {
         match event {
             Event::Key(key) => {
                 if is_typing {
-                    // Typing Mode
                     match key.code {
-                         KeyCode::Esc | KeyCode::Enter => {
-                             let _ = self.state.update(|s| s.is_typing = false);
-                             None
-                         }
-                         KeyCode::Backspace => {
-                             let _ = self.state.update(|s| {
-                                 s.filter.pop();
-                                 s.recalc_filter();
-                             });
-                             None
-                         }
-                         KeyCode::Char(c) => {
-                             let _ = self.state.update(|s| {
-                                 s.filter.push(c);
-                                 s.recalc_filter();
-                             });
-                             None
-                         }
+                         KeyCode::Esc | KeyCode::Enter => { let _ = self.state.update(|s| s.is_typing = false); None }
+                         KeyCode::Backspace => { let _ = self.state.update(|s| { s.filter.pop(); s.recalc_filter(); }); None }
+                         KeyCode::Char(c) => { let _ = self.state.update(|s| { s.filter.push(c); s.recalc_filter(); }); None }
                          _ => None,
                     }
                 } else {
-                    // Navigation Mode
                     match key.code {
                         KeyCode::Char('q') => Some(Action::Quit),
                         KeyCode::Char('m') => Some(Action::Navigate("menu".to_string())),
-                        KeyCode::Char('/') => {
-                            let _ = self.state.update(|s| {
-                                s.is_typing = true;
-                                s.auto_scroll = false; // Disable auto scroll when searching
-                            });
-                            None
+                        KeyCode::Char('/') => { 
+                            let _ = self.state.update(|s| { s.is_typing = true; s.auto_scroll = false; }); 
+                            None 
                         },
-                        KeyCode::Char(' ') => {
-                            let _ = self.state.update(|s| s.paused = !s.paused);
-                            None
-                        }
+                        KeyCode::Char(' ') => { let _ = self.state.update(|s| s.paused = !s.paused); None }
                         KeyCode::Char('a') => {
                             let _ = self.state.update(|s| { 
                                 s.auto_scroll = !s.auto_scroll;
-                                // Jump to bottom if enabling
                                 if s.auto_scroll && !s.filtered_indices.is_empty() {
                                     s.selected_index = s.filtered_indices.len() - 1;
                                 }
@@ -433,30 +363,21 @@ impl Component for LogPage {
                         }
                         KeyCode::Char('c') => {
                             let _ = self.state.update(|s| {
-                                s.logs.clear();
-                                s.filtered_indices.clear();
-                                s.selected_index = 0;
-                                s.stats = (0, 0, 0);
+                                s.logs.clear(); s.filtered_indices.clear(); s.selected_index = 0; s.stats = (0, 0, 0);
                             });
                             None
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             let _ = self.state.update(|s| {
-                                s.auto_scroll = false; // User manual interaction disrupts auto-scroll
-                                if s.selected_index > 0 {
-                                    s.selected_index -= 1;
-                                }
+                                s.auto_scroll = false;
+                                if s.selected_index > 0 { s.selected_index -= 1; }
                             });
                             None
                         }
                         KeyCode::Down | KeyCode::Char('j') => {
                             let _ = self.state.update(|s| {
                                 s.auto_scroll = false;
-                                if s.selected_index < s.filtered_indices.len().saturating_sub(1) {
-                                    s.selected_index += 1;
-                                } else if s.selected_index == s.filtered_indices.len().saturating_sub(1) {
-                                     // if at bottom, maybe re-enable auto scroll? optional.
-                                }
+                                if s.selected_index < s.filtered_indices.len().saturating_sub(1) { s.selected_index += 1; }
                             });
                             None
                         }
