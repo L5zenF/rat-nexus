@@ -1,3 +1,4 @@
+use rat_nexus::prelude::*;
 use rat_nexus::define_app;
 use crate::pages::{Menu, MonitorPage, TimerPage, ParticlesPage, FlappyPage, TicTacToePage};
 

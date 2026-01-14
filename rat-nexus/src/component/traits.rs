@@ -1,4 +1,5 @@
 use crate::application::{Context, EventContext};
+use crate::element::{Element, IntoElement};
 use std::any::Any;
 
 /// Event type for component interactions.
@@ -23,7 +24,7 @@ pub enum Action<R = String> {
 }
 
 /// The core Component trait for implementers.
-pub trait Component: Send + Sync + 'static {
+pub trait Component: Sized + Send + Sync + 'static {
     /// Called once when the component is first mounted (created and added to the tree).
     /// Use this for one-time initialization like spawning background tasks.
     fn on_mount(&mut self, cx: &mut Context<Self>) {
@@ -48,8 +49,8 @@ pub trait Component: Send + Sync + 'static {
         let _ = cx;
     }
 
-    /// Render the component into the given area.
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>);
+    /// Render the component into an Element tree.
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static;
 
     /// Handle an event, returning an optional action.
     fn handle_event(&mut self, event: Event, cx: &mut EventContext<Self>) -> Option<Action> {
@@ -65,7 +66,7 @@ pub trait AnyComponent: Any + Send + Sync + 'static {
     fn on_enter_any(&mut self, cx: &mut Context<dyn AnyComponent>);
     fn on_exit_any(&mut self, cx: &mut Context<dyn AnyComponent>);
     fn on_shutdown_any(&mut self, cx: &mut Context<dyn AnyComponent>);
-    fn render_any(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<dyn AnyComponent>);
+    fn render_any(&mut self, cx: &mut Context<dyn AnyComponent>) -> Box<dyn Element>;
     fn handle_event_any(&mut self, event: Event, cx: &mut EventContext<dyn AnyComponent>) -> Option<Action>;
 }
 
@@ -90,9 +91,10 @@ impl<T: Component> AnyComponent for T {
         self.on_shutdown(&mut cx);
     }
 
-    fn render_any(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<dyn AnyComponent>) {
+    fn render_any(&mut self, cx: &mut Context<dyn AnyComponent>) -> Box<dyn Element> {
         let mut cx = cx.cast::<Self>();
-        self.render(frame, &mut cx);
+        let element = self.render(&mut cx);
+        Box::new(element.into_element())
     }
 
     fn handle_event_any(&mut self, event: Event, cx: &mut EventContext<dyn AnyComponent>) -> Option<Action> {

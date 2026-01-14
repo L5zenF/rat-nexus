@@ -1,10 +1,10 @@
 //! Flappy Bird - Classic arcade game clone
 //! Showcases: Real-time game loop, collision detection, Entity state, Componentization
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::prelude::*;
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
-    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Rectangle, Points, Context as CanvasContext}},
+    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas as RatatuiCanvas, Rectangle, Points, Context as CanvasContext}},
     style::{Style, Color, Modifier},
     text::Line,
 };
@@ -294,71 +294,72 @@ impl Component for FlappyPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
         cx.subscribe(&self.state);
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
-        let area = frame.area();
 
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
-            .split(area);
+        canvas(move |frame, area| {
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+                .split(area);
 
-        // Header
-        let status = if !state_data.bird.alive { "GAME OVER" } else if !state_data.started { "READY" } else { "FLYING" };
-        let header_color = if !state_data.bird.alive { Color::Red } else { Color::Yellow };
-        let header = Paragraph::new(format!(" Score: {}  |  Best: {}  |  {} ", state_data.score, state_data.high_score, status))
-            .style(Style::default().fg(header_color).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
-        frame.render_widget(header, layout[0]);
+            // Header
+            let status = if !state_data.bird.alive { "GAME OVER" } else if !state_data.started { "READY" } else { "FLYING" };
+            let header_color = if !state_data.bird.alive { Color::Red } else { Color::Yellow };
+            let header = Paragraph::new(format!(" Score: {}  |  Best: {}  |  {} ", state_data.score, state_data.high_score, status))
+                .style(Style::default().fg(header_color).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
+            frame.render_widget(header, layout[0]);
 
-        // Game canvas
-        let bird = state_data.bird.clone();
-        let pipes = state_data.pipes.clone();
-        let started = state_data.started;
+            // Game canvas
+            let bird = state_data.bird.clone();
+            let pipes = state_data.pipes.clone();
+            let started = state_data.started;
 
-        let canvas = Canvas::default()
-            .block(Block::default()
-                .title(" Flappy Bird ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan)))
-            .x_bounds([0.0, 100.0])
-            .y_bounds([0.0, 50.0])
-            .paint(move |ctx| {
-                // Ground
-                ctx.draw(&Rectangle { x: 0.0, y: 0.0, width: 100.0, height: 2.0, color: Color::DarkGray });
+            let canvas_widget = RatatuiCanvas::default()
+                .block(Block::default()
+                    .title(" Flappy Bird ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)))
+                .x_bounds([0.0, 100.0])
+                .y_bounds([0.0, 50.0])
+                .paint(move |ctx| {
+                    // Ground
+                    ctx.draw(&Rectangle { x: 0.0, y: 0.0, width: 100.0, height: 2.0, color: Color::DarkGray });
 
-                // Render pipes
-                for pipe in &pipes {
-                    pipe.render(ctx);
-                }
+                    // Render pipes
+                    for pipe in &pipes {
+                        pipe.render(ctx);
+                    }
 
-                // Render bird (particle-based)
-                bird.render(ctx);
+                    // Render bird (particle-based)
+                    bird.render(ctx);
 
-                // Clouds
-                ctx.print(12.0, 44.0, Line::styled("☁", Style::default().fg(Color::White)));
-                ctx.print(55.0, 46.0, Line::styled("☁", Style::default().fg(Color::White)));
-                ctx.print(85.0, 42.0, Line::styled("☁", Style::default().fg(Color::White)));
+                    // Clouds
+                    ctx.print(12.0, 44.0, Line::styled("☁", Style::default().fg(Color::White)));
+                    ctx.print(55.0, 46.0, Line::styled("☁", Style::default().fg(Color::White)));
+                    ctx.print(85.0, 42.0, Line::styled("☁", Style::default().fg(Color::White)));
 
-                // Instructions
-                if !started && bird.alive {
-                    ctx.print(33.0, 28.0, Line::styled("Press SPACE to fly!", Style::default().fg(Color::White)));
-                }
-                if !bird.alive {
-                    ctx.print(40.0, 28.0, Line::styled("R to restart", Style::default().fg(Color::White)));
-                }
-            });
-        frame.render_widget(canvas, layout[1]);
+                    // Instructions
+                    if !started && bird.alive {
+                        ctx.print(33.0, 28.0, Line::styled("Press SPACE to fly!", Style::default().fg(Color::White)));
+                    }
+                    if !bird.alive {
+                        ctx.print(40.0, 28.0, Line::styled("R to restart", Style::default().fg(Color::White)));
+                    }
+                });
+            frame.render_widget(canvas_widget, layout[1]);
 
-        // Footer
-        let footer_color = if !state_data.bird.alive { Color::Red } else { Color::Yellow };
-        let footer = Paragraph::new(" SPACE Flap | R Reset | M Menu | Q Quit ")
-            .style(Style::default().bg(footer_color).fg(Color::Black))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, layout[2]);
+            // Footer
+            let footer_color = if !state_data.bird.alive { Color::Red } else { Color::Yellow };
+            let footer = Paragraph::new(" SPACE Flap | R Reset | M Menu | Q Quit ")
+                .style(Style::default().bg(footer_color).fg(Color::Black))
+                .alignment(Alignment::Center);
+            frame.render_widget(footer, layout[2]);
+        })
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

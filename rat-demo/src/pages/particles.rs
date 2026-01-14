@@ -1,10 +1,10 @@
 //! Particles Demo - Animated particle system
 //! Showcases: spawn_task, Entity updates, real-time animation, TaskTracker
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::prelude::*;
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
-    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Points}},
+    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas as RatatuiCanvas, Points}},
     style::{Style, Color},
 };
 use crossterm::event::KeyCode;
@@ -94,57 +94,58 @@ impl Component for ParticlesPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
         cx.subscribe(&self.state);
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
-        let area = frame.area();
 
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
-            .split(area);
+        canvas(move |frame, area| {
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+                .split(area);
 
-        // Header
-        let status = if state_data.paused { "PAUSED" } else { "RUNNING" };
-        let header = Paragraph::new(format!(
-            " Particles: {}  |  Spawned: {}  |  {} ",
-            state_data.particles.len(), state_data.total_spawned, status
-        ))
-        .style(Style::default().fg(Color::Cyan))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
-        frame.render_widget(header, layout[0]);
+            // Header
+            let status = if state_data.paused { "PAUSED" } else { "RUNNING" };
+            let header = Paragraph::new(format!(
+                " Particles: {}  |  Spawned: {}  |  {} ",
+                state_data.particles.len(), state_data.total_spawned, status
+            ))
+            .style(Style::default().fg(Color::Cyan))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
+            frame.render_widget(header, layout[0]);
 
-        // Canvas
-        let canvas_area = layout[1];
-        let particles_data: Vec<_> = state_data.particles.iter()
-            .map(|p| (p.x, p.y, p.color))
-            .collect();
+            // Canvas
+            let canvas_area = layout[1];
+            let particles_data: Vec<_> = state_data.particles.iter()
+                .map(|p| (p.x, p.y, p.color))
+                .collect();
 
-        let canvas = Canvas::default()
-            .block(Block::default()
-                .title(" Particle Fountain ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Magenta)))
-            .x_bounds([0.0, 100.0])
-            .y_bounds([0.0, 50.0])
-            .paint(move |ctx| {
-                for (x, y, color) in &particles_data {
-                    ctx.draw(&Points {
-                        coords: &[(*x, *y)],
-                        color: *color,
-                    });
-                }
-            });
-        frame.render_widget(canvas, canvas_area);
+            let canvas_widget = RatatuiCanvas::default()
+                .block(Block::default()
+                    .title(" Particle Fountain ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Magenta)))
+                .x_bounds([0.0, 100.0])
+                .y_bounds([0.0, 50.0])
+                .paint(move |ctx| {
+                    for (x, y, color) in &particles_data {
+                        ctx.draw(&Points {
+                            coords: &[(*x, *y)],
+                            color: *color,
+                        });
+                    }
+                });
+            frame.render_widget(canvas_widget, canvas_area);
 
-        // Footer
-        let color = if state_data.paused { Color::Yellow } else { Color::Magenta };
-        let footer = Paragraph::new(" SPACE Pause | Arrow Keys Move | R Reset | M Menu | Q Quit ")
-            .style(Style::default().bg(color).fg(Color::Black))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, layout[2]);
+            // Footer
+            let color = if state_data.paused { Color::Yellow } else { Color::Magenta };
+            let footer = Paragraph::new(" SPACE Pause | Arrow Keys Move | R Reset | M Menu | Q Quit ")
+                .style(Style::default().bg(color).fg(Color::Black))
+                .alignment(Alignment::Center);
+            frame.render_widget(footer, layout[2]);
+        })
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

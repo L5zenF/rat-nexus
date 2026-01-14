@@ -1,7 +1,7 @@
 //! Timer Demo - Stopwatch with lap times
 //! Showcases: Entity state, spawn_task, TaskTracker, async updates
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::prelude::*;
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment},
     widgets::{Block, Borders, Paragraph, List, ListItem, BorderType},
@@ -46,63 +46,64 @@ impl Component for TimerPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
         cx.subscribe(&self.state);
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
-        let area = frame.area();
 
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(9), Constraint::Min(0), Constraint::Length(3)])
-            .split(area);
+        canvas(move |frame, area| {
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(9), Constraint::Min(0), Constraint::Length(3)])
+                .split(area);
 
-        // Timer display
-        let time = format_time(state_data.elapsed_ms);
-        let color = if state_data.running { Color::Green } else { Color::Yellow };
+            // Timer display
+            let time = format_time(state_data.elapsed_ms);
+            let color = if state_data.running { Color::Green } else { Color::Yellow };
 
-        let timer_lines = vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(&time, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-            ]).alignment(Alignment::Center),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    if state_data.running { "  RUNNING  " } else { "  STOPPED  " },
-                    Style::default().fg(Color::Black).bg(color)
-                ),
-            ]).alignment(Alignment::Center),
-        ];
+            let timer_lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(&time, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                ]).alignment(Alignment::Center),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        if state_data.running { "  RUNNING  " } else { "  STOPPED  " },
+                        Style::default().fg(Color::Black).bg(color)
+                    ),
+                ]).alignment(Alignment::Center),
+            ];
 
-        let timer = Paragraph::new(timer_lines)
-            .block(Block::default()
-                .title(" Stopwatch ")
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(color)));
-        frame.render_widget(timer, layout[0]);
+            let timer = Paragraph::new(timer_lines)
+                .block(Block::default()
+                    .title(" Stopwatch ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(color)));
+            frame.render_widget(timer, layout[0]);
 
-        // Lap times
-        let lap_items: Vec<ListItem> = state_data.laps.iter().enumerate().rev()
-            .map(|(i, &ms)| {
-                ListItem::new(format!("  Lap {:02}  {}  ", i + 1, format_time(ms)))
-                    .style(Style::default().fg(Color::Cyan))
-            })
-            .collect();
+            // Lap times
+            let lap_items: Vec<ListItem> = state_data.laps.iter().enumerate().rev()
+                .map(|(i, &ms)| {
+                    ListItem::new(format!("  Lap {:02}  {}  ", i + 1, format_time(ms)))
+                        .style(Style::default().fg(Color::Cyan))
+                })
+                .collect();
 
-        let laps = List::new(lap_items)
-            .block(Block::default()
-                .title(format!(" Laps ({}) ", state_data.laps.len()))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Cyan)));
-        frame.render_widget(laps, layout[1]);
+            let laps = List::new(lap_items)
+                .block(Block::default()
+                    .title(format!(" Laps ({}) ", state_data.laps.len()))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)));
+            frame.render_widget(laps, layout[1]);
 
-        // Footer
-        let footer = Paragraph::new(" SPACE Start/Stop | L Lap | R Reset | M Menu | Q Quit ")
-            .style(Style::default().bg(color).fg(Color::Black))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, layout[2]);
+            // Footer
+            let footer = Paragraph::new(" SPACE Start/Stop | L Lap | R Reset | M Menu | Q Quit ")
+                .style(Style::default().bg(color).fg(Color::Black))
+                .alignment(Alignment::Center);
+            frame.render_widget(footer, layout[2]);
+        })
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {

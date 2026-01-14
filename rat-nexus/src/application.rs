@@ -536,8 +536,9 @@ impl Application {
                     terminal.draw(|frame| {
                         app.frame_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let mut cx = Context::<dyn AnyComponent>::new(AppContext::clone(&app), weak);
-                        root.update(|comp| comp.render_any(frame, &mut cx))
+                        let mut element = root.update(|comp| comp.render_any(&mut cx))
                             .expect("Root mutex poisoned during render");
+                        element.render(frame, frame.area());
                     })?;
                 }
             }
@@ -548,9 +549,7 @@ impl Application {
 struct DummyView;
 
 impl Component for DummyView {
-    fn render(&mut self, frame: &mut ratatui::Frame, _cx: &mut Context<Self>) {
-        let paragraph = ratatui::widgets::Paragraph::new("No component set")
-            .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(paragraph, frame.area());
+    fn render(&mut self, _cx: &mut Context<Self>) -> impl crate::element::IntoElement + 'static {
+        crate::element::text("No component set").align_center()
     }
 }

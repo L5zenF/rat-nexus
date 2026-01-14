@@ -7,7 +7,7 @@
 //! - Table with dynamic data
 //! - Complex layout composition
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity, TaskTracker};
+use rat_nexus::prelude::*;
 use crate::model::{AppState, MonitorState};
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment, Rect},
@@ -96,7 +96,7 @@ impl Component for MonitorPage {
         self.tasks.abort_all();
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
         cx.subscribe(&self.state);
         cx.subscribe(&self.app_state);
 
@@ -104,51 +104,51 @@ impl Component for MonitorPage {
         let app = self.app_state.read(|s| s.clone()).unwrap_or_default();
         let theme_color = app.theme.color();
 
-        let area = frame.area();
+        canvas(move |frame, area| {
+            // Main layout: Header, Body, Footer
+            let main_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Header
+                    Constraint::Min(0),    // Body
+                    Constraint::Length(3), // Footer
+                ])
+                .split(area);
 
-        // Main layout: Header, Body, Footer
-        let main_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(0),    // Body
-                Constraint::Length(3), // Footer
-            ])
-            .split(area);
+            // Header with system info
+            let uptime_str = format_uptime(state_data.uptime_secs);
+            let header_text = format!(
+                " 📊 System Monitor │ Uptime: {} │ Theme: {} ",
+                uptime_str,
+                app.theme.name()
+            );
+            let header = Paragraph::new(header_text)
+                .style(Style::default().fg(theme_color).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Left)
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(theme_color)));
+            frame.render_widget(header, main_layout[0]);
 
-        // Header with system info
-        let uptime_str = format_uptime(state_data.uptime_secs);
-        let header_text = format!(
-            " 📊 System Monitor │ Uptime: {} │ Theme: {} ",
-            uptime_str,
-            app.theme.name()
-        );
-        let header = Paragraph::new(header_text)
-            .style(Style::default().fg(theme_color).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Left)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme_color)));
-        frame.render_widget(header, main_layout[0]);
+            // Body layout
+            let body_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+                .split(main_layout[1]);
 
-        // Body layout
-        let body_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(main_layout[1]);
+            // Left side: Charts
+            Self::render_charts(frame, body_layout[0], &state_data, theme_color);
 
-        // Left side: Charts
-        self.render_charts(frame, body_layout[0], &state_data, theme_color);
+            // Right side: Metrics and processes
+            Self::render_sidebar(frame, body_layout[1], &state_data, theme_color);
 
-        // Right side: Metrics and processes
-        self.render_sidebar(frame, body_layout[1], &state_data, theme_color);
-
-        // Footer
-        let footer = Paragraph::new(" R Reset │ T Theme │ M Menu │ Q Quit │ Mouse: Scroll to adjust ")
-            .style(Style::default().bg(theme_color).fg(Color::Black))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, main_layout[2]);
+            // Footer
+            let footer = Paragraph::new(" R Reset │ T Theme │ M Menu │ Q Quit │ Mouse: Scroll to adjust ")
+                .style(Style::default().bg(theme_color).fg(Color::Black))
+                .alignment(Alignment::Center);
+            frame.render_widget(footer, main_layout[2]);
+        })
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
@@ -211,7 +211,7 @@ impl Component for MonitorPage {
 }
 
 impl MonitorPage {
-    fn render_charts(&self, frame: &mut ratatui::Frame, area: Rect, state: &MonitorState, theme_color: Color) {
+    fn render_charts(frame: &mut ratatui::Frame, area: Rect, state: &MonitorState, theme_color: Color) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -326,7 +326,7 @@ impl MonitorPage {
         }
     }
 
-    fn render_sidebar(&self, frame: &mut ratatui::Frame, area: Rect, state: &MonitorState, theme_color: Color) {
+    fn render_sidebar(frame: &mut ratatui::Frame, area: Rect, state: &MonitorState, theme_color: Color) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([

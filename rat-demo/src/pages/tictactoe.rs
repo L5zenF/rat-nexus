@@ -1,14 +1,15 @@
 //! Gomoku (Five in a Row) - Human vs AI game
 //! Showcases: Component composition, AI heuristics, State management, Canvas rendering, Mouse support
 
-use rat_nexus::{Component, Context, EventContext, Event, Action, Entity};
+use rat_nexus::prelude::*;
 use ratatui::{
     layout::{Layout, Constraint, Direction, Alignment, Rect},
-    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas, Line as CanvasLine, Circle}},
+    widgets::{Block, Borders, Paragraph, BorderType, canvas::{Canvas as RatatuiCanvas, Line as CanvasLine, Circle}},
     style::{Style, Color, Modifier},
     text::{Line, Span},
 };
 use crossterm::event::{KeyCode, MouseEventKind, MouseButton};
+use std::sync::{Arc, Mutex};
 
 const BOARD_SIZE: usize = 15;
 const WIN_COUNT: usize = 5;
@@ -452,17 +453,17 @@ impl GomokuState {
 #[derive(Default)]
 pub struct TicTacToePage {
     state: Entity<GomokuState>,
-    board_area: Rect,  // Store separately to avoid update in render
+    board_area: Arc<Mutex<Rect>>,  // Store layout for mouse detection
 }
 
 impl TicTacToePage {
-    fn render_board(&self, frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
+    fn render_board(frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
         let winning_line = state.winning_line.clone();
         let last_move = state.board.last_move;
         let cursor = state.cursor;
         let is_playing = state.status == GameStatus::Playing;
 
-        let canvas = Canvas::default()
+        let canvas = RatatuiCanvas::default()
             .block(Block::default()
                 .title(format!(" Gomoku {}x{} ", BOARD_SIZE, BOARD_SIZE))
                 .borders(Borders::ALL)
@@ -564,7 +565,7 @@ impl TicTacToePage {
         frame.render_widget(canvas, area);
     }
 
-    fn render_info_panel(&self, frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
+    fn render_info_panel(frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
         let status_text = match state.status {
             GameStatus::Playing => {
                 if state.is_human_turn { "Your turn (●)" } else { "AI thinking..." }
@@ -648,57 +649,61 @@ impl Component for TicTacToePage {
         self.state = state;
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
         cx.subscribe(&self.state);
         let state_data = self.state.read(|s| s.clone()).unwrap_or_default();
-        let area = frame.area();
+        let board_lock = self.board_area.clone();
 
-        let main_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(3),
-            ])
-            .split(area);
+        canvas(move |frame, area| {
+            let main_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                ])
+                .split(area);
 
-        // Header
-        let header_text = match state_data.status {
-            GameStatus::Playing => "🎮 Gomoku - Human vs AI",
-            GameStatus::HumanWon => "🎉 Victory! Five in a row!",
-            GameStatus::AIWon => "🤖 AI Wins!",
-            GameStatus::Draw => "🤝 It's a Draw!",
-        };
-        let header_color = match state_data.status {
-            GameStatus::Playing => Color::Cyan,
-            GameStatus::HumanWon => Color::Green,
-            GameStatus::AIWon => Color::Red,
-            GameStatus::Draw => Color::Yellow,
-        };
+            // Header
+            let header_text = match state_data.status {
+                GameStatus::Playing => "🎮 Gomoku - Human vs AI",
+                GameStatus::HumanWon => "🎉 Victory! Five in a row!",
+                GameStatus::AIWon => "🤖 AI Wins!",
+                GameStatus::Draw => "🤝 It's a Draw!",
+            };
+            let header_color = match state_data.status {
+                GameStatus::Playing => Color::Cyan,
+                GameStatus::HumanWon => Color::Green,
+                GameStatus::AIWon => Color::Red,
+                GameStatus::Draw => Color::Yellow,
+            };
 
-        let header = Paragraph::new(format!(" {} ", header_text))
-            .style(Style::default().fg(header_color).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
-        frame.render_widget(header, main_layout[0]);
+            let header = Paragraph::new(format!(" {} ", header_text))
+                .style(Style::default().fg(header_color).add_modifier(Modifier::BOLD))
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded));
+            frame.render_widget(header, main_layout[0]);
 
-        // Content
-        let content_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(main_layout[1]);
+            // Content
+            let content_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+                .split(main_layout[1]);
 
-        // Store board area for mouse click detection (no state update needed)
-        self.board_area = content_layout[0];
+            // Store board area for mouse click detection
+            if let Ok(mut guard) = board_lock.lock() {
+                *guard = content_layout[0];
+            }
 
-        self.render_board(frame, content_layout[0], &state_data);
-        self.render_info_panel(frame, content_layout[1], &state_data);
+            Self::render_board(frame, content_layout[0], &state_data);
+            Self::render_info_panel(frame, content_layout[1], &state_data);
 
-        // Footer
-        let footer = Paragraph::new(" Click/Enter Place | ↑↓←→ Move | R Reset | M Menu | Q Quit ")
-            .style(Style::default().bg(Color::Cyan).fg(Color::Black))
-            .alignment(Alignment::Center);
-        frame.render_widget(footer, main_layout[2]);
+            // Footer
+            let footer = Paragraph::new(" Click/Enter Place | ↑↓←→ Move | R Reset | M Menu | Q Quit ")
+                .style(Style::default().bg(Color::Cyan).fg(Color::Black))
+                .alignment(Alignment::Center);
+            frame.render_widget(footer, main_layout[2]);
+        })
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
@@ -747,7 +752,7 @@ impl Component for TicTacToePage {
             Event::Mouse(mouse) => {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        let board_area = self.board_area;
+                        let board_area = *self.board_area.lock().unwrap();
                         let _ = self.state.update(|s| {
                             if let Some((row, col)) = GomokuState::screen_to_cell(mouse.column, mouse.row, board_area) {
                                 s.cursor = (row, col);
@@ -763,7 +768,7 @@ impl Component for TicTacToePage {
                         None
                     }
                     MouseEventKind::Moved => {
-                        let board_area = self.board_area;
+                        let board_area = *self.board_area.lock().unwrap();
                         let _ = self.state.update(|s| {
                             if s.status == GameStatus::Playing {
                                 if let Some((row, col)) = GomokuState::screen_to_cell(mouse.column, mouse.row, board_area) {

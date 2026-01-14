@@ -284,9 +284,9 @@ macro_rules! define_app {
                     $(self.$field.on_shutdown(&mut cx.cast());)*
                 }
 
-                fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut $crate::Context<Self>) {
+                fn render(&mut self, cx: &mut $crate::Context<Self>) -> impl $crate::IntoElement + 'static {
                     match self.router.current() {
-                        $(RootRoute::$route => self.$field.render(frame, &mut cx.cast())),*
+                        $(RootRoute::$route => Box::new(self.$field.render(&mut cx.cast()).into_element()) as Box<dyn $crate::Element>),*
                     }
                 }
 

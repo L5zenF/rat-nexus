@@ -1,5 +1,4 @@
-use rat_nexus::{Component, Context, EventContext, Event, Action, Route, Entity};
-use ratatui::widgets::Paragraph;
+use rat_nexus::prelude::*;
 use crossterm::event::KeyCode;
 use crate::model::AppState;
 
@@ -50,27 +49,15 @@ impl Component for Menu {
         // Cleanup
     }
 
-    fn render(&mut self, frame: &mut ratatui::Frame, cx: &mut Context<Self>) {
-        use ratatui::layout::{Layout, Constraint, Direction, Alignment};
-        use ratatui::widgets::{Block, Borders, List, ListItem, BorderType};
+    fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement + 'static {
+        use ratatui::layout::{Alignment};
+        use ratatui::widgets::{Block, Borders, List, ListItem, BorderType, Paragraph};
         use ratatui::style::{Style, Modifier, Color};
         use ratatui::text::{Line, Span};
 
         cx.subscribe(&self.state);
         let app_state = self.state.read(|s| s.clone()).unwrap_or_default();
         let theme_color = app_state.theme.color();
-
-        let area = frame.area();
-
-        // Main layout
-        let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(8),  // ASCII Art header
-                Constraint::Min(0),     // Body
-                Constraint::Length(3),  // Footer
-            ])
-            .split(area);
 
         // ASCII Art Header
         let ascii_art = vec![
@@ -83,14 +70,6 @@ impl Component for Menu {
             Line::styled("  ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝       ╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝ ╚═════╝ ╚══════╝", Style::default().fg(theme_color)),
         ];
         let header = Paragraph::new(ascii_art).alignment(Alignment::Center);
-        frame.render_widget(header, main_chunks[0]);
-
-        // Body: Menu + Info panel
-        let body_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .margin(1)
-            .split(main_chunks[1]);
 
         // Menu list with descriptions
         let items: Vec<ListItem> = self.options.iter()
@@ -121,8 +100,6 @@ impl Component for Menu {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(theme_color)));
-
-        frame.render_widget(list, body_chunks[0]);
 
         // Info panel with framework features
         let info_lines = vec![
@@ -171,13 +148,24 @@ impl Component for Menu {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(theme_color)));
-        frame.render_widget(info, body_chunks[1]);
 
         // Footer
         let footer = Paragraph::new(" ↑/↓ Navigate │ Enter Select │ T Theme │ Q Quit ")
             .style(Style::default().bg(theme_color).fg(Color::Black))
             .alignment(Alignment::Center);
-        frame.render_widget(footer, main_chunks[2]);
+
+        // Compose elements
+        div()
+            .flex_col()
+            .child(widget(header).h(8))
+            .child(
+                div()
+                    .flex_row()
+                    .m(1)
+                    .child(widget(list).w_percent(55))
+                    .child(widget(info).w_percent(45))
+            )
+            .child(widget(footer).h(3))
     }
 
     fn handle_event(&mut self, event: Event, _cx: &mut EventContext<Self>) -> Option<Action> {
