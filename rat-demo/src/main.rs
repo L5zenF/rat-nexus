@@ -2,6 +2,7 @@
 
 mod model;
 mod pages;
+mod agent;
 mod app;
 
 use rat_nexus::Application;

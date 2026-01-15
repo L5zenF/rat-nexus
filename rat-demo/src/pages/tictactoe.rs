@@ -10,8 +10,9 @@ use ratatui::{
 };
 use crossterm::event::{KeyCode, MouseEventKind, MouseButton};
 use std::sync::{Arc, Mutex};
+use crate::agent::{create_gomoku_agent_from_env, create_commentator_agent_from_env, GomokuAgent, CommentatorAgent};
 
-const BOARD_SIZE: usize = 15;
+pub const BOARD_SIZE: usize = 15;
 const WIN_COUNT: usize = 5;
 
 // ============================================
@@ -344,6 +345,10 @@ pub struct GomokuState {
     ai_score: u32,
     is_human_turn: bool,
     winning_line: Option<Vec<(usize, usize)>>,
+    use_llm: bool,
+    is_thinking: bool,
+    history: Vec<(usize, usize, Cell)>,
+    ai_comment: Option<String>,
 }
 
 impl Default for GomokuState {
@@ -356,6 +361,10 @@ impl Default for GomokuState {
             ai_score: 0,
             is_human_turn: true,
             winning_line: None,
+            use_llm: false,
+            is_thinking: false,
+            history: Vec::new(),
+            ai_comment: None,
         }
     }
 }
@@ -400,6 +409,7 @@ impl GomokuState {
         }
 
         self.board.set(row, col, Cell::Black);
+        self.history.push((row, col, Cell::Black));
         self.check_game_status();
 
         if self.status == GameStatus::Playing {
@@ -416,6 +426,7 @@ impl GomokuState {
 
         if let Some((row, col)) = AI::find_best_move(&self.board) {
             self.board.set(row, col, Cell::White);
+            self.history.push((row, col, Cell::White));
             self.check_game_status();
         }
 
@@ -441,12 +452,19 @@ impl GomokuState {
         }
     }
 
+    fn toggle_llm(&mut self) {
+        self.use_llm = !self.use_llm;
+    }
+
     fn reset(&mut self) {
         self.board.reset();
         self.cursor = (BOARD_SIZE / 2, BOARD_SIZE / 2);
         self.status = GameStatus::Playing;
         self.is_human_turn = true;
         self.winning_line = None;
+        self.is_thinking = false;
+        self.history.clear();
+        self.ai_comment = None;
     }
 }
 
@@ -455,6 +473,8 @@ pub struct TicTacToePage {
     state: Entity<GomokuState>,
     board_area: Arc<Mutex<Rect>>,  // Store layout for mouse detection
     tasks: TaskTracker,
+    agent: Option<Arc<GomokuAgent<rig::providers::openai::CompletionModel>>>,
+    commentator: Option<Arc<CommentatorAgent>>,
 }
 
 impl TicTacToePage {
@@ -569,7 +589,13 @@ impl TicTacToePage {
     fn render_info_panel(frame: &mut ratatui::Frame, area: Rect, state: &GomokuState) {
         let status_text = match state.status {
             GameStatus::Playing => {
-                if state.is_human_turn { "Your turn (●)" } else { "AI thinking..." }
+                if state.is_thinking {
+                    "🤖 AI Thinking..."
+                } else if state.is_human_turn {
+                    "Your turn (●)"
+                } else {
+                    "AI thinking..."
+                }
             }
             GameStatus::HumanWon => "🎉 You Win!",
             GameStatus::AIWon => "🤖 AI Wins!",
@@ -577,19 +603,43 @@ impl TicTacToePage {
         };
 
         let status_color = match state.status {
-            GameStatus::Playing => Color::Cyan,
+            GameStatus::Playing => if state.is_thinking { Color::Magenta } else { Color::Cyan },
             GameStatus::HumanWon => Color::Green,
             GameStatus::AIWon => Color::Red,
             GameStatus::Draw => Color::Yellow,
         };
 
-        let info_lines = vec![
+        let mut info_lines = vec![
             Line::from(""),
             Line::from(vec![
                 Span::styled("  Status: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(status_text, Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
+        ];
+
+        // Highlight AI Commentary if it exists or is being generated
+        if let Some(comment) = &state.ai_comment {
+            info_lines.push(Line::from(vec![
+                Span::styled("  AI's Thought: ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            ]));
+            
+            // Wrap long text
+            for chunk in comment.chars().collect::<Vec<char>>().chunks(25) {
+                let line: String = chunk.iter().collect();
+                info_lines.push(Line::from(vec![
+                    Span::styled(format!("  {}", line), Style::default().fg(Color::Magenta).add_modifier(Modifier::ITALIC)),
+                ]));
+            }
+            info_lines.push(Line::from(""));
+        } else if state.status != GameStatus::Playing && state.history.len() > 0 {
+            info_lines.push(Line::from(vec![
+                Span::styled("  AI is typing...", Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+            ]));
+            info_lines.push(Line::from(""));
+        }
+
+        info_lines.extend(vec![
             Line::from(vec![
                 Span::styled("  Score", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ]),
@@ -603,8 +653,19 @@ impl TicTacToePage {
             ]),
             Line::from(""),
             Line::from(vec![
+                Span::styled("  AI Mode: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(if state.use_llm { "LLM Agent" } else { "Heuristic" }, 
+                    Style::default().fg(if state.use_llm { Color::Magenta } else { Color::Blue })),
+            ]),
+            Line::from(""),
+            Line::from(vec![
                 Span::styled("  Cursor: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("({}, {})", state.cursor.0 + 1, state.cursor.1 + 1), Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  History: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} moves", state.history.len()), Style::default().fg(Color::Blue)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -627,10 +688,16 @@ impl TicTacToePage {
                 Span::raw("New game"),
             ]),
             Line::from(vec![
+                Span::styled("  T       ", Style::default().fg(Color::Green)),
+                Span::raw("Toggle LLM AI"),
+            ]),
+            Line::from(vec![
                 Span::styled("  M/Esc   ", Style::default().fg(Color::Green)),
                 Span::raw("Back to menu"),
             ]),
-        ];
+        ]);
+
+        // AI Comment area moved up, so we remove the redundant bottom part
 
         let info = Paragraph::new(info_lines)
             .block(Block::default()
@@ -641,6 +708,111 @@ impl TicTacToePage {
 
         frame.render_widget(info, area);
     }
+
+    fn trigger_llm_move(&self, cx: &mut EventContext<Self>) {
+        let agent = match &self.agent {
+            Some(a) => Arc::clone(a),
+            None => {
+                let _ = self.state.update(|s| s.is_thinking = false);
+                return;
+            }
+        };
+        
+        let state = Entity::clone(&self.state);
+        let commentator = self.commentator.clone();
+        let cx_clone = cx.app().clone();
+        
+        cx.spawn_detached(move |_| async move {
+            let board = state.read(|s| s.board.clone()).unwrap_or_default();
+            
+            // Call the agent
+            match agent.find_move(&board).await {
+                Ok((row, col)) => {
+                    let mut needs_comment = false;
+                    let commentator_clone = commentator.clone();
+                    let cx_clone = cx_clone.clone();
+                    
+                    let _ = state.update(|s| {
+                        s.is_thinking = false;
+                        if s.status == GameStatus::Playing && !s.is_human_turn {
+                             if s.board.is_empty(row, col) {
+                                 s.board.set(row, col, Cell::White);
+                                 s.history.push((row, col, Cell::White));
+                                 s.check_game_status();
+                                 s.is_human_turn = true;
+                                 
+                                 if s.status != GameStatus::Playing {
+                                     needs_comment = true;
+                                 }
+                             } else {
+                                 // AI made an invalid move, fallback to heuristic
+                                 s.make_ai_move();
+                                 if s.status != GameStatus::Playing {
+                                     needs_comment = true;
+                                 }
+                             }
+                        }
+                    });
+
+                    if needs_comment {
+                        TicTacToePage::static_trigger_commentary(&state, commentator_clone, &cx_clone);
+                    }
+                }
+                Err(_e) => {
+                    // Fallback to heuristic or just stop thinking
+                    let mut needs_comment = false;
+                    let commentator_clone = commentator.clone();
+                    let cx_clone = cx_clone.clone();
+                    let _ = state.update(|s| {
+                        if s.status == GameStatus::Playing && !s.is_human_turn {
+                            s.is_thinking = false;
+                            s.make_ai_move();
+                            if s.status != GameStatus::Playing {
+                                needs_comment = true;
+                            }
+                        }
+                    });
+                    if needs_comment {
+                        TicTacToePage::static_trigger_commentary(&state, commentator_clone, &cx_clone);
+                    }
+                }
+            }
+        });
+    }
+
+    fn static_trigger_commentary(state: &Entity<GomokuState>, commentator: Option<Arc<CommentatorAgent>>, cx: &AppContext) {
+        let agent = match commentator {
+            Some(a) => a,
+            None => return,
+        };
+        
+        let state = Entity::clone(state);
+        
+        cx.spawn(move |_cx| async move {
+            let (history, result) = state.read(|s| {
+                let res_str = match s.status {
+                    GameStatus::HumanWon => "玩家获胜",
+                    GameStatus::AIWon => "AI获胜",
+                    GameStatus::Draw => "平局",
+                    _ => "未知",
+                };
+                (s.history.clone(), res_str.to_string())
+            }).unwrap_or_default();
+            
+            match agent.commentate(&history, &result).await {
+                Ok(comment) => {
+                    let _ = state.update(|s| s.ai_comment = Some(comment));
+                }
+                Err(e) => {
+                    let _ = state.update(|s| s.ai_comment = Some(format!("(评论生成失败: {})", e)));
+                }
+            }
+        });
+    }
+
+    fn trigger_commentary(&self, cx: &mut EventContext<Self>) {
+        Self::static_trigger_commentary(&self.state, self.commentator.clone(), cx.app());
+    }
 }
 
 impl Component for TicTacToePage {
@@ -648,6 +820,16 @@ impl Component for TicTacToePage {
         // Initialize state entity
         let state = cx.new_entity(GomokuState::default());
         self.state = state;
+
+        // Try to initialize LLM agent if environment variables are present
+        if let Ok(agent) = create_gomoku_agent_from_env() {
+             self.agent = Some(Arc::new(agent));
+             let _ = self.state.update(|s| s.use_llm = true);
+        }
+
+        if let Ok(commentator) = create_commentator_agent_from_env() {
+            self.commentator = Some(Arc::new(commentator));
+        }
 
         // Observe for re-renders
         self.tasks.track(cx.observe(&self.state));
@@ -712,12 +894,11 @@ impl Component for TicTacToePage {
                     )
             );
 
-        // Footer
         let footer = div()
             .h(3)
             .bg(Color::Cyan)
             .fg(Color::Black)
-            .child(text(" Click/Enter Place │ ↑↓←→ Move │ R Reset │ M Menu │ Q Quit ").align_center());
+            .child(text(" Click/Enter Place │ T Toggle LLM │ R Reset │ M Menu │ Q Quit ").align_center());
 
         // Final Layout
         div()
@@ -762,11 +943,33 @@ impl Component for TicTacToePage {
                     None
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => {
+                    let mut needs_llm = false;
+                    let mut needs_comment = false;
                     let _ = self.state.update(|s| {
                         if s.make_human_move() {
-                            s.make_ai_move();
+                            if s.status != GameStatus::Playing {
+                                needs_comment = true;
+                            } else if s.use_llm {
+                                needs_llm = true;
+                                s.is_thinking = true;
+                            } else {
+                                s.make_ai_move();
+                                if s.status != GameStatus::Playing {
+                                    needs_comment = true;
+                                }
+                            }
                         }
                     });
+                    
+                    if needs_comment {
+                        self.trigger_commentary(_cx);
+                    } else if needs_llm {
+                        self.trigger_llm_move(_cx);
+                    }
+                    None
+                }
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    let _ = self.state.update(|s| s.toggle_llm());
                     None
                 }
                 _ => None,
@@ -775,14 +978,32 @@ impl Component for TicTacToePage {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         let board_area = *self.board_area.lock().unwrap();
+                        let mut needs_llm = false;
+                        let mut needs_comment = false;
                         let _ = self.state.update(|s| {
                             if let Some((row, col)) = GomokuState::screen_to_cell(mouse.column, mouse.row, board_area) {
                                 s.cursor = (row, col);
                                 if s.make_move_at(row, col) {
-                                    s.make_ai_move();
+                                    if s.status != GameStatus::Playing {
+                                        needs_comment = true;
+                                    } else if s.use_llm {
+                                        needs_llm = true;
+                                        s.is_thinking = true;
+                                    } else {
+                                        s.make_ai_move();
+                                        if s.status != GameStatus::Playing {
+                                            needs_comment = true;
+                                        }
+                                    }
                                 }
                             }
                         });
+
+                        if needs_comment {
+                            self.trigger_commentary(_cx);
+                        } else if needs_llm {
+                            self.trigger_llm_move(_cx);
+                        }
                         None
                     }
                     MouseEventKind::Down(MouseButton::Right) => {
